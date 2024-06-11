@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PeerJS Chat</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <!-- <script src="./static/peerjs.min.js"></script> -->
+</head>
+<body>
+    <h1>PeerJS Chat</h1>
+    <input type="text" id="roomId" placeholder="Enter Room ID">
+    <button id="joinRoom">Join Room</button>
+    <button id="getPeers">Get Peers</button>
+    <br><br>
+    <select id="userSelect">
+        <option value="">Select a user to chat with</option>
+    </select>
+    <br><br>
+    <input type="text" id="messageInput" placeholder="Type a message...">
+    <button id="sendMessage">Send</button>
+    <br><br>
+    <button id="makeCall">Call Selected User</button>
+    <br><br>
+    <video id="remoteVideo" autoplay></video>
+    <script>
+        var peer;
+        var roomId;
+        var users = {};
+        var conn;
+        var localStream;
+        var remoteVideo = document.getElementById('remoteVideo');
+
+        // iOS compatibility fix: use secure connection
+        peer = new Peer({
+            secure: true,
+            config: {
+                'iceServers': [
+                    { url: 'stun:stun.l.google.com:19302' },
+                    { url: 'stun:stun1.l.google.com:19302' },
+                ]
+            }
+        });
+
+        peer.on('open', function(id) {
+            console.log('My peer ID is: ' + id);
+            users[id] = id;
+            var userSelect = document.getElementById('userSelect');
+            var option = document.createElement('option');
+            option.value = id;
+            option.text = id;
+            userSelect.add(option);
+            document.getElementById('myPeerId').innerHTML = 'My Peer ID: ' + id;
+        });
+
+        document.getElementById('joinRoom').addEventListener('click', function() {
+            roomId = document.getElementById('roomId').value;
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/join', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.send('roomId=' + roomId + '&peerId=' + peer.id);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    console.log(xhr.responseText);
+                }
+            };
+        });
+
+        document.getElementById('getPeers').addEventListener('click', function() {
+            roomId = document.getElementById('roomId').value;
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/get_peers', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.send('roomId=' + roomId);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    var peers = JSON.parse(xhr.responseText).peers;
+                    var userSelect = document.getElementById('userSelect');
+                    userSelect.innerHTML = '<option value="">Select a user to chat with</option>';
+                    peers.forEach(function(peerId) {
+                        if (peerId !== peer.id) {
+                            var option = document.createElement('option');
+                            option.value = peerId;
+                            option.text = peerId;
+                            userSelect.add(option);
+                        }
+                    });
+                }
+            };
+        });
+
+        document.getElementById('sendMessage').addEventListener('click', function() {
+            var userId = document.getElementById('userSelect').value;
+            var message = document.getElementById('messageInput').value;
+            if (userId && message) {
+                conn = peer.connect(userId);
+                conn.on('open', function() {
+                    conn.send(message);
+                    document.getElementById('chatLog').innerHTML += 'You: ' + message + '<br>';
+                    document.getElementById('messageInput').value = '';
+                });
+            }
+        });
+
+        document.getElementById('makeCall').addEventListener('click', function() {
+            var selectedUserId = document.getElementById('userSelect').value;
+            if (selectedUserId) {
+                var call = peer.call(selectedUserId, localStream);
+                call.on('stream', function(remoteStream) {
+                    remoteVideo.srcObject = remoteStream;
+                });
+            }
+        });
+
+        peer.on('connection', function(conn) {
+            conn.on('data', function(data) {
+                document.getElementById('chatLog').innerHTML += 'Peer: ' + data + '<br>';
+            });
+        });
+
+        navigator.mediaDevices.getUserMedia({video: true, audio: true})
+        .then(function(stream) {
+            localStream = stream;
+        })
+        .catch(function(err) {
+            console.log("Error: " + err);
+        });
+
+        peer.on('call', function(call) {
+            call.answer(localStream);
+            call.on('stream', function(remoteStream) {
+                remoteVideo.srcObject = remoteStream;
+            });
+        });
+    </script>
+    <div id="myPeerId"></div>
+</body>
+</html>
