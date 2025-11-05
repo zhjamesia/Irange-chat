@@ -131,9 +131,25 @@
 			</div>
 
 			<div class="chat-area">
-				<!-- messages pane moved to the LEFT (user requested "on left the msg box") -->
+				<!-- contacts pane on the RIGHT now; includes join room + camera + call controls -->
+				<div class="contacts-pane" id="contacts">
+					<!-- new: join controls + camera + call inserted into contacts pane -->
+					<div id="roomControls" style="padding:10px;border-bottom:1px solid #eee;">
+						<input type="text" id="roomIdLeft" placeholder="Enter Room ID" style="width:80%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
+						<button id="joinRoomLeft" class="btn" style="width:100%;margin-bottom:8px;">Join Room</button>
+
+						<label for="cameraSelect" style="display:block;margin-bottom:6px;font-size:12px;color:#666;">Camera</label>
+						<select id="cameraSelect" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
+							<option value="">Default camera</option>
+						</select>
+
+						<button id="makeCall" class="btn" style="width:48%;display:inline-block;margin-right:4%;">Call</button>
+						<button id="answerCall" class="btn" style="width:48%;display:inline-block;display:none;">Answer</button>
+					</div>
+
+					<div id="contactsList"></div>
+				</div>
 				<div class="messages-pane">
-					<!-- Combined input bar: file picker + textarea + single send -->
 					<div class="input-bar">
 						<input id="imageInput" class="file-input" type="file" accept="image/*">
 						<textarea id="messageInput" placeholder="Type a message..."></textarea>
@@ -143,27 +159,6 @@
 
 				</div>
 
-				<!-- contacts pane on the RIGHT now; includes join room + camera + call controls -->
-				<div class="contacts-pane" id="contacts">
-					<!-- new: join controls + camera + call inserted into contacts pane -->
-					<div id="roomControls" style="padding:10px;border-bottom:1px solid #eee;">
-						<input type="text" id="roomIdLeft" placeholder="Enter Room ID" style="width:80%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
-						<button id="joinRoomLeft" class="btn" style="width:100%;margin-bottom:8px;">Join Room</button>
-
-						<!-- camera select visible in the window -->
-						<label for="cameraSelect" style="display:block;margin-bottom:6px;font-size:12px;color:#666;">Camera</label>
-						<select id="cameraSelect" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
-							<option value="">Default camera</option>
-						</select>
-
-						<!-- call / answer controls visible in the window -->
-						<button id="makeCall" class="btn" style="width:48%;display:inline-block;margin-right:4%;">Call</button>
-						<button id="answerCall" class="btn" style="width:48%;display:inline-block;display:none;">Answer</button>
-					</div>
-
-					<!-- contacts list rendered below -->
-					<div id="contactsList"></div>
-				</div>
 			</div>
 		</div>
 	</div>
