@@ -151,7 +151,7 @@
 				</div>
 				<div class="messages-pane">
 					<div class="input-bar">
-						<input id="imageInput" class="file-input" type="file" accept="image/*">
+						<input id="imageInput" class="file-input" type="file" accept="*/*">
 						<textarea id="messageInput" placeholder="Type a message..."></textarea>
 						<button id="sendAll" class="btn">Send</button>
 					</div>
@@ -202,6 +202,7 @@
 			if (!peerId) return;
 			messages[peerId] = messages[peerId] || [];
 			messages[peerId].push({ text: text, from: from, isImage: !!isImage, me: !!me, ts: Date.now() });
+
 			// only render if the chat with this peer is active
 			if (peerId === currentPeer) {
 				var messagesDiv = document.getElementById('chatLog');
@@ -214,10 +215,89 @@
 					var img = document.createElement('img');
 					img.className = 'msg-img';
 					img.src = text;
+					// fallback: if image fails to load, replace bubble content with a download link
+					img.onerror = function() {
+						bubble.innerHTML = '';
+						appendFileLink(text, 'image-' + Date.now() + '.png', from, me, peerId, bubble);
+					};
+					// click to open/download image in new tab
+					img.addEventListener('click', function() {
+						try { window.open(text, '_blank'); } catch (e) {}
+						// attempt programmatic download (some browsers ignore download on cross-origin)
+						try {
+							var a = document.createElement('a');
+							a.href = text;
+							a.download = 'image_' + Date.now() + '.png';
+							document.body.appendChild(a);
+							a.click();
+							a.remove();
+						} catch (e) {}
+					});
 					bubble.appendChild(img);
 				} else {
 					bubble.textContent = text;
 				}
+				wrapper.appendChild(bubble);
+				var time = document.createElement('div');
+				time.className = 'msg-time';
+				time.textContent = (from ? (from + ' ') : '') + new Date().toLocaleTimeString();
+				wrapper.appendChild(time);
+				messagesDiv.appendChild(wrapper);
+				messagesDiv.scrollTop = messagesDiv.scrollHeight;
+			}
+		}
+
+		// New helper to append a download link for files/blobs
+		function appendFileLink(url, filename, from, me, peerId, targetBubble) {
+			peerId = peerId || currentPeer;
+			messages[peerId] = messages[peerId] || [];
+			messages[peerId].push({ text: url, from: from, isImage: false, me: !!me, filename: filename, ts: Date.now() });
+
+			// render into the provided bubble element if one was passed (used by image.onerror) else create wrapper
+			var messagesDiv = document.getElementById('chatLog');
+			var wrapper = document.createElement('div');
+			wrapper.className = 'message ' + (me ? 'me' : 'other');
+
+			var bubble = targetBubble || document.createElement('div');
+			if (!targetBubble) bubble.className = 'bubble ' + (me ? 'right' : 'left');
+
+			var a = document.createElement('a');
+			a.href = url;
+			a.download = filename || '';
+			a.textContent = filename || 'Download file';
+			a.target = '_blank';
+			a.rel = 'noopener';
+			a.style.color = '#00c853';
+			a.style.textDecoration = 'none';
+			a.style.fontWeight = '600';
+
+			// Some environments/browsers ignore download on blob/data URLs. Add a click fallback that fetches and forces download.
+			a.addEventListener('click', function(evt) {
+				try {
+					// If it's a data: URL or same-origin blob: URL, default behavior is usually fine.
+					// For others, we attempt fetch->blob->download to increase chance of download working.
+					if (url.indexOf('http') === 0) return; // allow normal navigation for http(s)
+					evt.preventDefault();
+					fetch(url).then(function(res) { return res.blob(); }).then(function(blob) {
+						var blobUrl = URL.createObjectURL(blob);
+						var ta = document.createElement('a');
+						ta.href = blobUrl;
+						ta.download = filename || ('file_' + Date.now());
+						document.body.appendChild(ta);
+						ta.click();
+						ta.remove();
+						setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 10000);
+					}).catch(function() {
+						// if fetch fails, fall back to opening the URL in a new tab
+						window.open(url, '_blank');
+					});
+				} catch (e) {
+					// ignore and let default behavior occur
+				}
+			});
+
+			bubble.appendChild(a);
+			if (!targetBubble) {
 				wrapper.appendChild(bubble);
 				var time = document.createElement('div');
 				time.className = 'msg-time';
@@ -331,41 +411,63 @@
                 cb(c);
             });
 
+            // <-- FIX: single data handler (removed nested c.on('data') duplication) -->
             c.on('data', function(data) {
-                var peerId = c.peer;
-                // string data: could be data URL or plain text
-                if (typeof data === 'string') {
-                    if (data.indexOf('data:') === 0) {
-                        // data URL: determine if image or other and handle
-                        handleDataUrlString(data, peerId, peerId, false);
-                    } else {
-                        appendMessage(data, peerId, false, false, peerId);
-                    }
-                } else if (data instanceof Blob) {
-                    // Blob: check mime
-                    var mime = data.type || '';
-                    if (mime.indexOf('image/') === 0) {
-                        var imgUrl = URL.createObjectURL(data);
-                        appendMessage(imgUrl, peerId, true, false, peerId);
-                    } else {
-                        var ext = getExtensionFromMime(mime);
-                        var filename = 'file_' + Date.now() + '.' + ext;
-                        var url = URL.createObjectURL(data);
-                        appendFileLink(url, filename, peerId, false, peerId);
-                    }
-                } else if (data instanceof ArrayBuffer) {
-                    // create blob and offer download
-                    var blob = new Blob([data], { type: 'application/octet-stream' });
-                    var filename = 'file_' + Date.now() + '.bin';
-                    var url = URL.createObjectURL(blob);
+                var peerId = userId;
+
+                // small helper to store a file message and render a download link in chat UI
+                function storeAndRenderFile(url, filename) {
                     appendFileLink(url, filename, peerId, false, peerId);
-                } else {
-                    try {
-                        appendMessage(JSON.stringify(data), peerId, false, false, peerId);
-                    } catch (e) {
-                        appendMessage('Peer sent data', peerId, false, false, peerId);
-                    }
                 }
+
+                try {
+                    if (typeof data === 'string') {
+                        // data URL (image or other) or plain text
+                        if (data.indexOf('data:') === 0) {
+                            if (data.indexOf('data:image/') === 0) {
+                                // image data URL — render image
+                                appendMessage(data, peerId, true, false, peerId);
+                            } else {
+                                // other data URL — offer as downloadable link
+                                var fn = 'file_' + Date.now();
+                                storeAndRenderFile(data, fn);
+                            }
+                        } else {
+                            // plain text
+                            appendMessage(data, peerId, false, false, peerId);
+                        }
+                    } else if (data instanceof Blob) {
+                        var mime = data.type || '';
+                        if (mime.indexOf('image/') === 0) {
+                            // image Blob
+                            var imgUrl = URL.createObjectURL(data);
+                            appendMessage(imgUrl, peerId, true, false, peerId);
+                            // schedule revoke after some time (keep enough for user to view/download)
+                            setTimeout(function(){ URL.revokeObjectURL(imgUrl); }, 60000);
+                        } else {
+                            // non-image Blob -> create download link
+                            var ext = (mime.split('/')[1] || 'bin').split(';')[0];
+                            var filename = 'file_' + Date.now() + '.' + ext;
+                            var url = URL.createObjectURL(data);
+                            storeAndRenderFile(url, filename);
+                            setTimeout(function(){ /* keep URL for download; optionally revoke later */ }, 60000);
+                        }
+                    } else if (data instanceof ArrayBuffer) {
+                        var blob = new Blob([data], { type: 'application/octet-stream' });
+                        var filename = 'file_' + Date.now() + '.bin';
+                        var url = URL.createObjectURL(blob);
+                        storeAndRenderFile(url, filename);
+                        setTimeout(function(){ /* optionally revoke later */ }, 60000);
+                    } else {
+                        // fallback: stringify unknown objects
+                        try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch (e) { appendMessage('Peer sent data', peerId, false, false, peerId); }
+                    }
+                } catch (e) {
+                    console.error('Error handling incoming data from', peerId, e);
+                }
+
+                // ensure contact appears in list
+                addContact(peerId);
             });
 
             c.on('error', function(err) {
@@ -688,8 +790,7 @@
         // Remove any unconditional navigator.mediaDevices.getUserMedia(...) auto-call at bottom
 
 		// --- Changed: show/hide remote video overlay and handle active call reference ---
-		var activeCall = null;
-
+		// activeCall handled above (remove duplicate declaration)
 		function showRemoteStream(remoteStream) {
 			var overlay = document.getElementById('remoteOverlay');
 			overlay.style.display = 'block';
