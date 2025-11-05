@@ -20,12 +20,17 @@
     <input type="file" id="imageInput" accept="image/*">
     <button id="sendImage">Send Image</button>
     <button id="takePicture">Take Picture</button>
-    <video id="localVideo" autoplay></video>
+    <!-- changed: add playsinline and mute local preview so iOS allows autoplay -->
+    <video id="localVideo" autoplay playsinline muted></video>
+    <!-- added: camera selector so user can pick which camera to use -->
+    <select id="cameraSelect"><option value="">Default camera</option></select>
     <canvas id="canvas" style="display:none;"></canvas>
     <br><br>
     <button id="makeCall">Call Selected User</button>
+    <!-- added: button to answer incoming calls (hidden until a call arrives) -->
+    <button id="answerCall" style="display:none;">Answer Call</button>
     <br><br>
-    <video id="remoteVideo" autoplay></video>
+    <video id="remoteVideo" autoplay playsinline></video>
     <script>
         var peer;
         var roomId;
@@ -34,6 +39,8 @@
         var localStream;
         var remoteVideo = document.getElementById('remoteVideo');
         var localVideo = document.getElementById('localVideo');
+        // added cameraSelect reference
+        var cameraSelect = document.getElementById('cameraSelect');
         var canvas = document.getElementById('canvas');
         var context = canvas.getContext('2d');
 
@@ -188,17 +195,17 @@
         });
 
         document.getElementById('takePicture').addEventListener('click', function() {
-            navigator.mediaDevices.getUserMedia({video: true, audio: false})
-            .then(function(stream) {
+            // ensure preview stream exists from selected camera
+            ensureLocalStream(function(stream) {
+                if (!stream) return;
                 localVideo.srcObject = stream;
-                localVideo.play();
-                var videoTracks = stream.getVideoTracks();
-                var track = videoTracks[0];
-                // ImageCapture is not supported on all iOS versions — fallback to drawing to canvas
-                if (typeof ImageCapture !== 'undefined') {
-                    var imageCapture = new ImageCapture(track);
-                    imageCapture.takePhoto()
-                    .then(function(blob) {
+                localVideo.play().catch(function(){});
+                // draw current frame to canvas after a short delay to allow frame to appear
+                setTimeout(function(){
+                    canvas.width = localVideo.videoWidth || 640;
+                    canvas.height = localVideo.videoHeight || 480;
+                    context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob(function(blob) {
                         var userId = document.getElementById('userSelect').value;
                         var reader = new FileReader();
                         reader.onload = function() {
@@ -209,48 +216,165 @@
                             });
                         };
                         reader.readAsDataURL(blob);
-                    })
-                    .catch(function(error) {
-                        console.error('Error taking photo:', error);
-                    });
-                } else {
-                    // fallback: grab a frame from the video into a canvas
-                    var userId = document.getElementById('userSelect').value;
-                    canvas.width = localVideo.videoWidth || 640;
-                    canvas.height = localVideo.videoHeight || 480;
-                    context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
-                    canvas.toBlob(function(blob) {
-                        var reader = new FileReader();
-                        reader.onload = function() {
-                            var imageData = reader.result;
-                            getOrCreateConnection(userId, function(conn) {
-                                conn.send(imageData);
-                                document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
-                            });
-                        };
-                        reader.readAsDataURL(blob);
                     }, 'image/png');
+                }, 200);
+            });
+        });
+
+        // New helper: request local media on demand (use user gesture)
+        function ensureLocalStream(cb) {
+            if (localStream) {
+                // if a camera is selected that differs from current stream, recreate
+                var selectedId = cameraSelect.value || null;
+                var currentDeviceId = null;
+                try {
+                    var tracks = localStream.getVideoTracks();
+                    if (tracks && tracks.length) {
+                        // many browsers provide getSettings().deviceId
+                        currentDeviceId = tracks[0].getSettings ? tracks[0].getSettings().deviceId : null;
+                    }
+                } catch (e) { currentDeviceId = null; }
+
+                if (selectedId && currentDeviceId !== selectedId) {
+                    // stop old tracks and fall through to request new stream
+                    localStream.getTracks().forEach(function(t){ try{ t.stop(); }catch(e){} });
+                    localStream = null;
+                } else {
+                    if (cb) cb(localStream);
+                    // try to populate list now that permission granted
+                    populateCameraList();
+                    return;
                 }
+            }
+
+            var selectedDeviceId = cameraSelect.value || null;
+            var videoConstraints = selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : { facingMode: 'user' };
+
+            navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: true })
+            .then(function(stream) {
+                localStream = stream;
+                // stop previously attached srcObject tracks if any (defensive)
+                try {
+                    localVideo.srcObject = stream;
+                    localVideo.muted = true;
+                    localVideo.setAttribute('playsinline', '');
+                    localVideo.play().catch(function(){ /* ignore autoplay rejection */ });
+                } catch (e) {
+                    console.warn('Could not set localVideo srcObject:', e);
+                }
+                // update camera dropdown labels now we have permission
+                populateCameraList();
+                if (cb) cb(stream);
             })
             .catch(function(err) {
-                console.log("Error: " + err);
+                console.error('getUserMedia error:', err);
+                alert('Camera/microphone access is required to make/answer calls.');
+                if (cb) cb(null);
+            });
+        }
+
+        // New: populate available video input devices into cameraSelect
+        function populateCameraList() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+            navigator.mediaDevices.enumerateDevices()
+            .then(function(devices) {
+                var videoInputs = devices.filter(function(d) { return d.kind === 'videoinput'; });
+                // preserve current selection
+                var current = cameraSelect.value;
+                cameraSelect.innerHTML = '<option value="">Default camera</option>';
+                videoInputs.forEach(function(device) {
+                    var option = document.createElement('option');
+                    option.value = device.deviceId;
+                    // use label when available (after permission), fallback to deviceId suffix
+                    option.text = device.label || ('Camera ' + (cameraSelect.length));
+                    cameraSelect.add(option);
+                });
+                // try to restore selection
+                if (current) cameraSelect.value = current;
+            })
+            .catch(function(err) {
+                console.warn('Could not list cameras:', err);
+            });
+        }
+
+        // When user changes camera selection, re-acquire stream (user gesture recommended)
+        cameraSelect.addEventListener('change', function() {
+            // attempt to switch camera; this will stop old tracks and request new stream
+            ensureLocalStream(function(stream){
+                if (!stream) {
+                    console.warn('Switch camera failed or permission denied');
+                }
             });
         });
 
         document.getElementById('makeCall').addEventListener('click', function() {
             var selectedUserId = document.getElementById('userSelect').value;
             if (selectedUserId) {
-                // ensure we have localStream before calling
-                if (!localStream) {
-                    alert('Local media not ready yet');
+                ensureLocalStream(function(stream) {
+                    if (!stream) {
+                        alert('Unable to get local media');
+                        return;
+                    }
+                    var call = peer.call(selectedUserId, stream);
+                    call.on('stream', function(remoteStream) {
+                        try {
+                            remoteVideo.srcObject = remoteStream;
+                            remoteVideo.setAttribute('playsinline', '');
+                            remoteVideo.play().catch(function(){ /* ignore */ });
+                        } catch (e) {
+                            console.warn('Could not play remote stream:', e);
+                        }
+                    });
+                    call.on('error', function(err){ console.error('Call error', err); });
+                });
+            }
+        });
+
+        // Answer incoming calls only after ensuring we have local media
+        var pendingCall = null;
+        var answerBtn = document.getElementById('answerCall');
+
+        // Replace auto-answer behavior: when a call arrives, save it and show the answer button
+        peer.on('call', function(call) {
+            console.log('Incoming call from', call.peer);
+            pendingCall = call;
+            answerBtn.style.display = 'inline-block';
+            // optionally notify user in UI
+            document.getElementById('chatLog').innerHTML += 'Incoming call from ' + call.peer + ' — click Answer Call to accept<br>';
+        });
+
+        // When user clicks Answer Call, request camera/mic (user gesture) and then answer
+        answerBtn.addEventListener('click', function() {
+            if (!pendingCall) return;
+            // ensureLocalStream will prompt in a user gesture on iOS
+            ensureLocalStream(function(stream) {
+                if (!stream) {
+                    alert('Could not get camera/microphone.');
                     return;
                 }
-                var call = peer.call(selectedUserId, localStream);
-                call.on('stream', function(remoteStream) {
-                    remoteVideo.srcObject = remoteStream;
+                try {
+                    pendingCall.answer(stream);
+                } catch (e) {
+                    console.error('Error answering call:', e);
+                }
+                pendingCall.on('stream', function(remoteStream) {
+                    try {
+                        remoteVideo.srcObject = remoteStream;
+                        remoteVideo.setAttribute('playsinline', '');
+                        remoteVideo.play().catch(function(){ /* ignore */ });
+                    } catch (e) {
+                        console.warn('Could not play remote stream:', e);
+                    }
                 });
-                call.on('error', function(err){ console.error('Call error', err); });
-            }
+                pendingCall.on('close', function() {
+                    console.log('Call closed by peer');
+                });
+                pendingCall.on('error', function(err){ console.error('Call error', err); });
+
+                // clear pending call and hide button
+                pendingCall = null;
+                answerBtn.style.display = 'none';
+            });
         });
 
         // --- Changed: store inbound connections so we can reuse them ---
@@ -303,20 +427,7 @@
             });
          });
 
-        navigator.mediaDevices.getUserMedia({video: true, audio: true})
-        .then(function(stream) {
-            localStream = stream;
-        })
-        .catch(function(err) {
-            console.log("Error: " + err);
-        });
-
-        peer.on('call', function(call) {
-            call.answer(localStream);
-            call.on('stream', function(remoteStream) {
-                remoteVideo.srcObject = remoteStream;
-            });
-        });
+        // Remove any unconditional navigator.mediaDevices.getUserMedia(...) auto-call at bottom
     </script>
     <div id="myPeerId"></div>
     <div id="chatLog"></div>
