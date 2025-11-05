@@ -4,48 +4,129 @@
     <title>PeerJS Chat</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <!-- <script src="./static/peerjs.min.js"></script> -->
+    <!-- Add/replace styles for centered fixed-size chat box -->
+	<style>
+		/* Centered fixed-size chat box */
+		.center-wrap { display:flex; align-items:center; justify-content:center; height:100vh; background:#e5ddd5; }
+		.chat-box {
+			width:720px;
+			height:600px;
+			background:#ffffff;
+			border-radius:12px;
+			box-shadow:0 6px 18px rgba(0,0,0,0.12);
+			display:flex;
+			flex-direction:column;
+			overflow:hidden;
+		}
+		.chat-header {
+			padding:12px 16px;
+			background:#00c853;
+			color:#fff;
+			font-weight:600;
+			display:flex;
+			justify-content:space-between;
+			align-items:center;
+		}
+		.chat-area { display:flex; flex:1; min-height:0; } /* min-height:0 needed for flexbox scroll */
+		.contacts-pane {
+			width:260px;
+			border-right:1px solid #eee;
+			overflow:auto;
+			background:#fafafa;
+		}
+		.contacts-pane .contact { padding:10px; border-bottom:1px solid #f0f0f0; cursor:pointer; }
+		.messages-pane {
+			flex:1;
+			display:flex;
+			flex-direction:column;
+			min-width:0;
+		}
+		.messages {
+			padding:16px;
+			overflow:auto;
+			background:linear-gradient(180deg,#f6f6f6,#eaeaea);
+			flex:1;
+		}
+		.input-bar {
+			padding:10px;
+			display:flex;
+			gap:8px;
+			align-items:center;
+			border-top:1px solid #eee;
+			background:#fff;
+		}
+		.input-bar textarea { flex:1; resize:none; height:48px; padding:10px; border-radius:8px; border:1px solid #ddd; font-size:14px; }
+		.input-bar .file-input {
+			display:inline-block;
+		}
+		.input-bar .btn { background:#00c853; color:#fff; padding:10px 14px; border-radius:8px; border:none; cursor:pointer; }
+		/* small image in bubble */
+		.msg-img { max-width:260px; border-radius:8px; display:block; }
+
+		/* keep previous wechat-like bubble styles if present */
+		.message.me { justify-content:flex-end; }
+		.bubble.right { background:#00c853; color:#fff; }
+		.bubble.left { background:#fff; color:#111; }
+	</style>
 </head>
 <body>
-    <h1>PeerJS Chat</h1>
-    <input type="text" id="roomId" placeholder="Enter Room ID">
-    <button id="joinRoom">Join Room</button>
-    <button id="getPeers">Get Peers</button>
-    <br><br>
-    <select id="userSelect">
-        <option value="">Select a user to chat with</option>
-    </select>
-    <br><br>
-    <input type="text" id="messageInput" placeholder="Type a message...">
-    <button id="sendMessage">Send</button>
-    <input type="file" id="imageInput" accept="image/*">
-    <button id="sendImage">Send Image</button>
-    <button id="takePicture">Take Picture</button>
+    <!-- Replace main wechat layout with centered chat-box while preserving contacts and chat area -->
+	<div class="center-wrap">
+		<div class="chat-box">
+			<div class="chat-header">
+				<span>WeChat Lite</span>
+				<small id="myPeerId">...</small>
+			</div>
+
+			<div class="chat-area">
+				<!-- messages pane moved to the LEFT (user requested "on left the msg box") -->
+				<div class="messages-pane">
+					<div id="chatLog" class="messages"></div>
+
+					<!-- Combined input bar: file picker + textarea + single send -->
+					<div class="input-bar">
+						<input id="imageInput" class="file-input" type="file" accept="image/*">
+						<textarea id="messageInput" placeholder="Type a message..."></textarea>
+						<button id="sendAll" class="btn">Send</button>
+					</div>
+				</div>
+
+				<!-- contacts pane on the RIGHT now; includes join room + camera + call controls -->
+				<div class="contacts-pane" id="contacts">
+					<!-- new: join controls + camera + call inserted into contacts pane -->
+					<div id="roomControls" style="padding:10px;border-bottom:1px solid #eee;">
+						<input type="text" id="roomIdLeft" placeholder="Enter Room ID" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
+						<button id="joinRoomLeft" class="btn" style="width:100%;margin-bottom:8px;">Join Room</button>
+
+						<!-- camera select visible in the window -->
+						<label for="cameraSelect" style="display:block;margin-bottom:6px;font-size:12px;color:#666;">Camera</label>
+						<select id="cameraSelect" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
+							<option value="">Default camera</option>
+						</select>
+
+						<!-- call / answer controls visible in the window -->
+						<button id="makeCall" class="btn" style="width:48%;display:inline-block;margin-right:4%;">Call</button>
+						<button id="answerCall" class="btn" style="width:48%;display:inline-block;display:none;">Answer</button>
+					</div>
+
+					<!-- contacts list rendered below -->
+					<div id="contactsList"></div>
+				</div>
+			</div>
+		</div>
+	</div>
+
     <!-- changed: add playsinline and mute local preview so iOS allows autoplay -->
     <video id="localVideo" autoplay playsinline muted></video>
-    <!-- added: camera selector so user can pick which camera to use -->
-    <select id="cameraSelect"><option value="">Default camera</option></select>
     <canvas id="canvas" style="display:none;"></canvas>
     <br><br>
-    <button id="makeCall">Call Selected User</button>
-    <!-- added: button to answer incoming calls (hidden until a call arrives) -->
-    <button id="answerCall" style="display:none;">Answer Call</button>
-    <br><br>
+    <!-- Removed the duplicate cameraSelect / makeCall / answerCall nodes that were previously placed after the chat-box.
+     Those were removed to avoid duplicated controls. Keep the hidden local video/canvas for capture if needed. -->
+
     <video id="remoteVideo" autoplay playsinline></video>
     <script>
-        var peer;
-        var roomId;
-        var users = {};
-        var conn;
-        var localStream;
-        var remoteVideo = document.getElementById('remoteVideo');
-        var localVideo = document.getElementById('localVideo');
-        // added cameraSelect reference
-        var cameraSelect = document.getElementById('cameraSelect');
-        var canvas = document.getElementById('canvas');
-        var context = canvas.getContext('2d');
-
         // --- Changed: create peer with modern iceServers ("urls") and debug/error logging ---
-        peer = new Peer({
+        var peer = new Peer({
             secure: true,
             debug: 2,
             config: {
@@ -55,6 +136,134 @@
                 ]
             }
         });
+
+        var roomId = null;
+        var users = {};
+        var conn;
+        var localStream;
+        var remoteVideo = document.getElementById('remoteVideo');
+        var localVideo = document.getElementById('localVideo');
+        var cameraSelect = document.getElementById('cameraSelect');
+        var canvas = document.getElementById('canvas');
+        var context = canvas.getContext('2d');
+
+        // New: chat storage and UI helpers
+		var messages = {}; // { peerId: [{text, from, isImage, me, ts}, ...] }
+		var currentPeer = null;
+		var refreshTimer = null;
+
+		function appendMessage(text, from, isImage, me, peerId) {
+			peerId = peerId || currentPeer;
+			if (!peerId) return;
+			messages[peerId] = messages[peerId] || [];
+			messages[peerId].push({ text: text, from: from, isImage: !!isImage, me: !!me, ts: Date.now() });
+			// only render if the chat with this peer is active
+			if (peerId === currentPeer) {
+				var messagesDiv = document.getElementById('chatLog');
+				// render single message
+				var wrapper = document.createElement('div');
+				wrapper.className = 'message ' + (me ? 'me' : 'other');
+				var bubble = document.createElement('div');
+				bubble.className = 'bubble ' + (me ? 'right' : 'left');
+				if (isImage) {
+					var img = document.createElement('img');
+					img.className = 'msg-img';
+					img.src = text;
+					bubble.appendChild(img);
+				} else {
+					bubble.textContent = text;
+				}
+				wrapper.appendChild(bubble);
+				var time = document.createElement('div');
+				time.className = 'msg-time';
+				time.textContent = (from ? (from + ' ') : '') + new Date().toLocaleTimeString();
+				wrapper.appendChild(time);
+				messagesDiv.appendChild(wrapper);
+				messagesDiv.scrollTop = messagesDiv.scrollHeight;
+			}
+		}
+
+		function renderChat(peerId) {
+			currentPeer = peerId;
+			var messagesDiv = document.getElementById('chatLog');
+			messagesDiv.innerHTML = '';
+			if (!peerId) {
+				document.getElementById('chatTitle') && (document.getElementById('chatTitle').textContent = 'Select a contact');
+				return;
+			}
+			document.getElementById('chatTitle') && (document.getElementById('chatTitle').textContent = peerId);
+			var list = messages[peerId] || [];
+			list.forEach(function(m) {
+				var wrapper = document.createElement('div');
+				wrapper.className = 'message ' + (m.me ? 'me' : 'other');
+				var bubble = document.createElement('div');
+				bubble.className = 'bubble ' + (m.me ? 'right' : 'left');
+				if (m.isImage) {
+					var img = document.createElement('img');
+					img.className = 'msg-img';
+					img.src = m.text;
+					bubble.appendChild(img);
+				} else {
+					bubble.textContent = m.text;
+				}
+				wrapper.appendChild(bubble);
+				var time = document.createElement('div');
+				time.className = 'msg-time';
+				time.textContent = (m.from ? (m.from + ' ') : '') + new Date(m.ts).toLocaleTimeString();
+				wrapper.appendChild(time);
+				messagesDiv.appendChild(wrapper);
+			});
+			messagesDiv.scrollTop = messagesDiv.scrollHeight;
+		}
+
+		// Contacts rendering helpers
+		var contactsListDiv = document.getElementById('contactsList');
+
+		function renderContacts(peers) {
+			contactsListDiv.innerHTML = '';
+			peers.forEach(function(id) {
+				if (id !== peer.id) {
+					addContact(id);
+					// restore selected state if this was the currentPeer
+					if (currentPeer && id === currentPeer) {
+						var sel = contactsListDiv.querySelector('.contact[data-id="'+id+'"]');
+						if (sel) sel.classList.add('selected');
+					}
+				}
+			});
+		}
+
+		// Replace addContact to reliably set currentPeer and support touch
+		function addContact(id) {
+			if (contactsListDiv.querySelector('.contact[data-id="'+id+'"]')) return;
+			var el = document.createElement('div');
+			el.className = 'contact';
+			el.dataset.id = id;
+			el.innerHTML = '<div class="avatar"></div><div class="meta"><strong>' + id + '</strong><small>Tap to chat</small></div>';
+
+			function selectContact() {
+				// highlight selection
+				Array.from(contactsListDiv.children).forEach(function(c){ c.classList.remove('selected'); });
+				el.classList.add('selected');
+
+				// update hidden select (keeps existing logic compatible)
+				var us = document.getElementById('userSelect');
+				if (us) us.value = id;
+
+				// authoritative selection used by sendAll and render
+				currentPeer = id;
+				renderChat(id);
+			}
+
+			el.addEventListener('click', selectContact);
+			// touchstart improves responsiveness on mobile/touch devices
+			el.addEventListener('touchstart', function(evt){
+				evt.preventDefault(); // prevent 300ms delay / synthetic mouse events
+				selectContact();
+			}, { passive:false });
+
+			contactsListDiv.appendChild(el);
+		}
 
         peer.on('error', function(err) {
             console.error('Peer error:', err);
@@ -78,34 +287,17 @@
             });
 
             c.on('data', function(data) {
-                // ensure inbound messages on outgoing connections are also handled
-                var chatLog = document.getElementById('chatLog');
-                if (typeof data === 'string') {
-                    if (data.indexOf('data:image/') === 0) {
-                        var image = document.createElement('img');
-                        image.src = data;
-                        image.style.maxWidth = '400px';
-                        image.style.display = 'block';
-                        chatLog.appendChild(image);
-                        chatLog.innerHTML += '<br>';
-                    } else {
-                        chatLog.innerHTML += 'Peer: ' + data + '<br>';
-                    }
-                } else if (data instanceof Blob || data instanceof ArrayBuffer) {
-                    var url = URL.createObjectURL(data);
-                    var image = document.createElement('img');
-                    image.src = url;
-                    image.style.maxWidth = '400px';
-                    image.style.display = 'block';
-                    chatLog.appendChild(image);
-                    chatLog.innerHTML += '<br>';
-                } else {
-                    try {
-                        chatLog.innerHTML += 'Peer: ' + JSON.stringify(data) + '<br>';
-                    } catch (e) {
-                        chatLog.innerHTML += 'Peer sent data<br>';
-                    }
-                }
+                var peerId = c.peer;
+				if (typeof data === 'string' && data.indexOf('data:image/') === 0) {
+					appendMessage(data, peerId, true, false, peerId);
+				} else if (typeof data === 'string') {
+					appendMessage(data, peerId, false, false, peerId);
+				} else if (data instanceof Blob || data instanceof ArrayBuffer) {
+					var url = URL.createObjectURL(data);
+					appendMessage(url, peerId, true, false, peerId);
+				} else {
+					try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch(e){ appendMessage('Peer sent data', peerId, false, false, peerId);}
+				}
             });
 
             c.on('error', function(err) {
@@ -118,108 +310,97 @@
             });
         }
 
+        // Refresh peers from server and update UI
+		function refreshPeersFromServer() {
+			if (!roomId) return;
+			var xhr = new XMLHttpRequest();
+			xhr.open('POST', '/get_peers', true);
+			xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+			xhr.send('roomId=' + encodeURIComponent(roomId));
+			xhr.onload = function() {
+				if (xhr.status === 200) {
+					try {
+						var peers = JSON.parse(xhr.responseText).peers || [];
+						// update left contacts UI
+						renderContacts(peers);
+						// also update hidden select for backwards compatibility
+						var userSelect = document.getElementById('userSelect');
+						userSelect.innerHTML = '<option value="">Select a user to chat with</option>';
+						peers.forEach(function(peerId) {
+							if (peerId !== peer.id) {
+								var option = document.createElement('option');
+								option.value = peerId;
+								option.text = peerId;
+								userSelect.add(option);
+							}
+						});
+					} catch (e) { console.warn('Invalid peers response', e); }
+				}
+			};
+		}
+
         peer.on('open', function(id) {
             console.log('My peer ID is: ' + id);
             users[id] = users[id] || { id: id };
-            var userSelect = document.getElementById('userSelect');
-            var option = document.createElement('option');
-            option.value = id;
-            option.text = id;
-            userSelect.add(option);
+            addContact(id); // optional, shows self in contacts
             document.getElementById('myPeerId').innerHTML = 'My Peer ID: ' + id;
+            // if already had roomId (reconnect), refresh peers
+            if (roomId) { refreshPeersFromServer(); if (refreshTimer) clearInterval(refreshTimer); refreshTimer = setInterval(refreshPeersFromServer, 10000); }
         });
 
-        document.getElementById('joinRoom').addEventListener('click', function() {
-            roomId = document.getElementById('roomId').value;
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', '/join', true);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-            xhr.send('roomId=' + roomId + '&peerId=' + peer.id);
-            xhr.onload = function() {
-                if (xhr.status === 200) {
-                    console.log(xhr.responseText);
-                }
-            };
-        });
+        document.getElementById('joinRoomLeft').addEventListener('click', function() {
+			roomId = document.getElementById('roomIdLeft').value;
+			if (!roomId) { alert('Enter a room id'); return; }
+			var xhr = new XMLHttpRequest();
+			xhr.open('POST', '/join', true);
+			xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+			xhr.send('roomId=' + encodeURIComponent(roomId) + '&peerId=' + encodeURIComponent(peer.id));
+			xhr.onload = function() {
+				if (xhr.status === 200) {
+					// start immediate refresh and periodic refresh every 10s
+					refreshPeersFromServer();
+					if (refreshTimer) clearInterval(refreshTimer);
+					refreshTimer = setInterval(refreshPeersFromServer, 10000);
+				} else {
+					alert('Failed to join room');
+				}
+			};
+		});
 
-        document.getElementById('getPeers').addEventListener('click', function() {
-            roomId = document.getElementById('roomId').value;
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', '/get_peers', true);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-            xhr.send('roomId=' + roomId);
-            xhr.onload = function() {
-                if (xhr.status === 200) {
-                    var peers = JSON.parse(xhr.responseText).peers;
-                    var userSelect = document.getElementById('userSelect');
-                    userSelect.innerHTML = '<option value="">Select a user to chat with</option>';
-                    peers.forEach(function(peerId) {
-                        if (peerId !== peer.id) {
-                            var option = document.createElement('option');
-                            option.value = peerId;
-                            option.text = peerId;
-                            userSelect.add(option);
-                        }
-                    });
-                }
-            };
-        });
+		// unified send: prefer currentPeer (explicitly selected contact)
+		document.getElementById('sendAll').addEventListener('click', function() {
+			// prefer currentPeer first
+			var userId = currentPeer || (document.getElementById('userSelect') && document.getElementById('userSelect').value) || '';
+			if (!userId) { alert('Select a contact to send to.'); return; }
 
-        document.getElementById('sendMessage').addEventListener('click', function() {
-            var userId = document.getElementById('userSelect').value;
-            var message = document.getElementById('messageInput').value;
-            if (userId && message) {
-                getOrCreateConnection(userId, function(conn) {
-                    conn.send(message);
-                    document.getElementById('chatLog').innerHTML += 'You: ' + message + '<br>';
-                    document.getElementById('messageInput').value = '';
-                });
-            }
-        });
+			var imageInput = document.getElementById('imageInput');
+			var messageInput = document.getElementById('messageInput');
 
-        document.getElementById('sendImage').addEventListener('click', function() {
-            var userId = document.getElementById('userSelect').value;
-            var imageInput = document.getElementById('imageInput');
-            if (userId && imageInput.files.length > 0) {
-                var file = imageInput.files[0];
-                var reader = new FileReader();
-                reader.onload = function() {
-                    var imageData = reader.result;
-                    getOrCreateConnection(userId, function(conn) {
-                        conn.send(imageData);
-                        document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
-                    });
-                };
-                reader.readAsDataURL(file);
-            }
-        });
+			if (imageInput && imageInput.files && imageInput.files.length > 0) {
+				var file = imageInput.files[0];
+				var reader = new FileReader();
+				reader.onload = function() {
+					var imageData = reader.result;
+					getOrCreateConnection(userId, function(conn) {
+						conn.send(imageData);
+						// store and render locally
+						appendMessage(imageData, 'You', true, true, userId);
+						imageInput.value = '';
+					});
+				};
+				reader.readAsDataURL(file);
+				return;
+			}
 
-        document.getElementById('takePicture').addEventListener('click', function() {
-            // ensure preview stream exists from selected camera
-            ensureLocalStream(function(stream) {
-                if (!stream) return;
-                localVideo.srcObject = stream;
-                localVideo.play().catch(function(){});
-                // draw current frame to canvas after a short delay to allow frame to appear
-                setTimeout(function(){
-                    canvas.width = localVideo.videoWidth || 640;
-                    canvas.height = localVideo.videoHeight || 480;
-                    context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
-                    canvas.toBlob(function(blob) {
-                        var userId = document.getElementById('userSelect').value;
-                        var reader = new FileReader();
-                        reader.onload = function() {
-                            var imageData = reader.result;
-                            getOrCreateConnection(userId, function(conn) {
-                                conn.send(imageData);
-                                document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
-                            });
-                        };
-                        reader.readAsDataURL(blob);
-                    }, 'image/png');
-                }, 200);
-            });
-        });
+			var message = messageInput.value && messageInput.value.trim();
+			if (message) {
+				getOrCreateConnection(userId, function(conn) {
+					conn.send(message);
+					appendMessage(message, 'You', false, true, userId);
+					messageInput.value = '';
+				});
+			}
+		});
 
         // New helper: request local media on demand (use user gesture)
         function ensureLocalStream(cb) {
@@ -308,26 +489,28 @@
         });
 
         document.getElementById('makeCall').addEventListener('click', function() {
-            var selectedUserId = document.getElementById('userSelect').value;
-            if (selectedUserId) {
-                ensureLocalStream(function(stream) {
-                    if (!stream) {
-                        alert('Unable to get local media');
-                        return;
-                    }
-                    var call = peer.call(selectedUserId, stream);
-                    call.on('stream', function(remoteStream) {
-                        try {
-                            remoteVideo.srcObject = remoteStream;
-                            remoteVideo.setAttribute('playsinline', '');
-                            remoteVideo.play().catch(function(){ /* ignore */ });
-                        } catch (e) {
-                            console.warn('Could not play remote stream:', e);
-                        }
-                    });
-                    call.on('error', function(err){ console.error('Call error', err); });
-                });
-            }
+			var selectedUserId = currentPeer || (document.getElementById('userSelect') && document.getElementById('userSelect').value);
+			if (!selectedUserId) {
+				alert('Select a contact to call.');
+				return;
+			}
+			ensureLocalStream(function(stream) {
+				if (!stream) {
+					alert('Unable to get local media');
+					return;
+				}
+				var call = peer.call(selectedUserId, stream);
+				call.on('stream', function(remoteStream) {
+					try {
+						remoteVideo.srcObject = remoteStream;
+						remoteVideo.setAttribute('playsinline', '');
+						remoteVideo.play().catch(function(){ /* ignore */ });
+					} catch (e) {
+						console.warn('Could not play remote stream:', e);
+					}
+				});
+				call.on('error', function(err){ console.error('Call error', err); });
+			});
         });
 
         // Answer incoming calls only after ensuring we have local media
@@ -384,37 +567,24 @@
             users[c.peer].conn = c;
 
             c.on('data', function(data) {
-                var chatLog = document.getElementById('chatLog');
-                if (typeof data === 'string') {
-                    if (data.indexOf('data:image/') === 0) {
-                        var image = document.createElement('img');
-                        image.src = data;
-                        image.style.maxWidth = '400px';
-                        image.style.display = 'block';
-                        chatLog.appendChild(image);
-                        chatLog.innerHTML += '<br>';
-                    } else {
-                        chatLog.innerHTML += 'Peer: ' + data + '<br>';
-                    }
-                } else if (data instanceof Blob || data instanceof ArrayBuffer) {
-                    var url = URL.createObjectURL(data);
-                    var image = document.createElement('img');
-                    image.src = url;
-                    image.style.maxWidth = '400px';
-                    image.style.display = 'block';
-                    chatLog.appendChild(image);
-                    chatLog.innerHTML += '<br>';
-                } else {
-                    try {
-                        chatLog.innerHTML += 'Peer: ' + JSON.stringify(data) + '<br>';
-                    } catch (e) {
-                        chatLog.innerHTML += 'Peer sent data<br>';
-                    }
-                }
+                var peerId = c.peer;
+				if (typeof data === 'string' && data.indexOf('data:image/') === 0) {
+					appendMessage(data, peerId, true, false, peerId);
+				} else if (typeof data === 'string') {
+					appendMessage(data, peerId, false, false, peerId);
+				} else if (data instanceof Blob || data instanceof ArrayBuffer) {
+					var url = URL.createObjectURL(data);
+					appendMessage(url, peerId, true, false, peerId);
+				} else {
+					try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch(e){ appendMessage('Peer sent data', peerId, false, false, peerId);}
+				}
+				// if contact not in list yet, add it
+				addContact(peerId);
             });
 
             c.on('open', function() {
                 console.log('Inbound connection open from', c.peer);
+                addContact(c.peer);
             });
 
             c.on('close', function() {
@@ -425,11 +595,11 @@
             c.on('error', function(err){
                 console.error('Inbound connection error from', c.peer, err);
             });
-         });
+        });
 
         // Remove any unconditional navigator.mediaDevices.getUserMedia(...) auto-call at bottom
     </script>
-    <div id="myPeerId"></div>
-    <div id="chatLog"></div>
+
+    <!-- ...existing footer/ placeholders ... -->
 </body>
 </html>
