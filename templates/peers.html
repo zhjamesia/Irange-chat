@@ -7,16 +7,16 @@
     <!-- Add/replace styles for centered fixed-size chat box -->
 	<style>
 		/* Centered fixed-size chat box */
-		.center-wrap { display:flex; align-items:center; justify-content:center; height:100vh; background:#e5ddd5; }
+		.center-wrap { display:block; height:100vh; background:#e5ddd5; }
 		.chat-box {
-			width:720px;
-			height:600px;
-			background:#ffffff;
-			border-radius:12px;
+			width:100vw;
+			height:100vh;
+			border-radius:0;
 			box-shadow:0 6px 18px rgba(0,0,0,0.12);
 			display:flex;
 			flex-direction:column;
 			overflow:hidden;
+			position:relative; /* needed for overlay positioning */
 		}
 		.chat-header {
 			padding:12px 16px;
@@ -67,6 +67,46 @@
 		.message.me { justify-content:flex-end; }
 		.bubble.right { background:#00c853; color:#fff; }
 		.bubble.left { background:#fff; color:#111; }
+
+		/* Remote video overlay (overlaps chat until hangup) */
+		.remote-overlay {
+			/* changed: make overlay cover 80% of screen and center it */
+			position: absolute;
+			top: 10vh;           /* 10% from top */
+			left: 10vw;          /* 10% from left */
+			width: 80vw;         /* 80% viewport width */
+			height: 80vh;        /* 80% viewport height */
+			background: #000;
+			border-radius: 8px;
+			box-shadow: 0 8px 48px rgba(0,0,0,0.45);
+			z-index: 9999;
+			display: none;
+			overflow: hidden;
+		}
+		.remote-overlay video {
+			width: 100%;
+			height: 100%;
+			object-fit: contain; /* changed: contain so entire remote video is visible */
+			background: #000;
+		}
+
+		/* Ensure no page-level scrollbars from element overflow */
+		html, body {
+			height: 100%;
+			margin: 0;
+			overflow: hidden;
+			box-sizing: border-box;
+		}
+	</style>
+</head>
+<body>
+		/* Ensure no page-level scrollbars from element overflow */
+		html, body {
+			height: 100%;
+			margin: 0;
+			overflow: hidden;
+			box-sizing: border-box;
+		}
 	</style>
 </head>
 <body>
@@ -76,6 +116,12 @@
 			<div class="chat-header">
 				<span>WeChat Lite</span>
 				<small id="myPeerId">...</small>
+			</div>
+
+			<!-- add overlay just after header so it's positioned inside the chat container -->
+			<div id="remoteOverlay" class="remote-overlay" aria-hidden="true">
+				<video id="remoteOverlayVideo" autoplay playsinline></video>
+				<button id="hangupBtn" class="hangup-btn">Hang Up</button>
 			</div>
 
 			<div class="chat-area">
@@ -95,7 +141,7 @@
 				<div class="contacts-pane" id="contacts">
 					<!-- new: join controls + camera + call inserted into contacts pane -->
 					<div id="roomControls" style="padding:10px;border-bottom:1px solid #eee;">
-						<input type="text" id="roomIdLeft" placeholder="Enter Room ID" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
+						<input type="text" id="roomIdLeft" placeholder="Enter Room ID" style="width:80%;padding:6px;border-radius:6px;border:1px solid #ddd;margin-bottom:8px;">
 						<button id="joinRoomLeft" class="btn" style="width:100%;margin-bottom:8px;">Join Room</button>
 
 						<!-- camera select visible in the window -->
@@ -119,11 +165,7 @@
     <!-- changed: add playsinline and mute local preview so iOS allows autoplay -->
     <video id="localVideo" autoplay playsinline muted></video>
     <canvas id="canvas" style="display:none;"></canvas>
-    <br><br>
-    <!-- Removed the duplicate cameraSelect / makeCall / answerCall nodes that were previously placed after the chat-box.
-     Those were removed to avoid duplicated controls. Keep the hidden local video/canvas for capture if needed. -->
 
-    <video id="remoteVideo" autoplay playsinline></video>
     <script>
         // --- Changed: create peer with modern iceServers ("urls") and debug/error logging ---
         var peer = new Peer({
@@ -141,7 +183,7 @@
         var users = {};
         var conn;
         var localStream;
-        var remoteVideo = document.getElementById('remoteVideo');
+        var remoteOverlayVideo = document.getElementById('remoteOverlayVideo');
         var localVideo = document.getElementById('localVideo');
         var cameraSelect = document.getElementById('cameraSelect');
         var canvas = document.getElementById('canvas');
@@ -288,16 +330,39 @@
 
             c.on('data', function(data) {
                 var peerId = c.peer;
-				if (typeof data === 'string' && data.indexOf('data:image/') === 0) {
-					appendMessage(data, peerId, true, false, peerId);
-				} else if (typeof data === 'string') {
-					appendMessage(data, peerId, false, false, peerId);
-				} else if (data instanceof Blob || data instanceof ArrayBuffer) {
-					var url = URL.createObjectURL(data);
-					appendMessage(url, peerId, true, false, peerId);
-				} else {
-					try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch(e){ appendMessage('Peer sent data', peerId, false, false, peerId);}
-				}
+                // string data: could be data URL or plain text
+                if (typeof data === 'string') {
+                    if (data.indexOf('data:') === 0) {
+                        // data URL: determine if image or other and handle
+                        handleDataUrlString(data, peerId, peerId, false);
+                    } else {
+                        appendMessage(data, peerId, false, false, peerId);
+                    }
+                } else if (data instanceof Blob) {
+                    // Blob: check mime
+                    var mime = data.type || '';
+                    if (mime.indexOf('image/') === 0) {
+                        var imgUrl = URL.createObjectURL(data);
+                        appendMessage(imgUrl, peerId, true, false, peerId);
+                    } else {
+                        var ext = getExtensionFromMime(mime);
+                        var filename = 'file_' + Date.now() + '.' + ext;
+                        var url = URL.createObjectURL(data);
+                        appendFileLink(url, filename, peerId, false, peerId);
+                    }
+                } else if (data instanceof ArrayBuffer) {
+                    // create blob and offer download
+                    var blob = new Blob([data], { type: 'application/octet-stream' });
+                    var filename = 'file_' + Date.now() + '.bin';
+                    var url = URL.createObjectURL(blob);
+                    appendFileLink(url, filename, peerId, false, peerId);
+                } else {
+                    try {
+                        appendMessage(JSON.stringify(data), peerId, false, false, peerId);
+                    } catch (e) {
+                        appendMessage('Peer sent data', peerId, false, false, peerId);
+                    }
+                }
             });
 
             c.on('error', function(err) {
@@ -500,16 +565,12 @@
 					return;
 				}
 				var call = peer.call(selectedUserId, stream);
+				activeCall = call;
 				call.on('stream', function(remoteStream) {
-					try {
-						remoteVideo.srcObject = remoteStream;
-						remoteVideo.setAttribute('playsinline', '');
-						remoteVideo.play().catch(function(){ /* ignore */ });
-					} catch (e) {
-						console.warn('Could not play remote stream:', e);
-					}
+					showRemoteStream(remoteStream);
 				});
-				call.on('error', function(err){ console.error('Call error', err); });
+				call.on('close', function(){ hideRemoteStream(); });
+				call.on('error', function(err){ console.error('Call error', err); hideRemoteStream(); });
 			});
         });
 
@@ -540,19 +601,12 @@
                 } catch (e) {
                     console.error('Error answering call:', e);
                 }
+                activeCall = pendingCall;
                 pendingCall.on('stream', function(remoteStream) {
-                    try {
-                        remoteVideo.srcObject = remoteStream;
-                        remoteVideo.setAttribute('playsinline', '');
-                        remoteVideo.play().catch(function(){ /* ignore */ });
-                    } catch (e) {
-                        console.warn('Could not play remote stream:', e);
-                    }
-                });
-                pendingCall.on('close', function() {
-                    console.log('Call closed by peer');
-                });
-                pendingCall.on('error', function(err){ console.error('Call error', err); });
+					showRemoteStream(remoteStream);
+				});
+				pendingCall.on('close', function(){ hideRemoteStream(); });
+				pendingCall.on('error', function(err){ console.error('Incoming call error', err); hideRemoteStream(); });
 
                 // clear pending call and hide button
                 pendingCall = null;
@@ -568,15 +622,31 @@
 
             c.on('data', function(data) {
                 var peerId = c.peer;
-				if (typeof data === 'string' && data.indexOf('data:image/') === 0) {
-					appendMessage(data, peerId, true, false, peerId);
-				} else if (typeof data === 'string') {
-					appendMessage(data, peerId, false, false, peerId);
-				} else if (data instanceof Blob || data instanceof ArrayBuffer) {
-					var url = URL.createObjectURL(data);
-					appendMessage(url, peerId, true, false, peerId);
+				if (typeof data === 'string') {
+					if (data.indexOf('data:') === 0) {
+						// data URL: convert and handle accordingly
+						handleDataUrlString(data, peerId, peerId, false);
+					} else {
+						appendMessage(data, peerId, false, false, peerId);
+					}
+				} else if (data instanceof Blob) {
+					var mime = data.type || '';
+					if (mime.indexOf('image/') === 0) {
+						var imgUrl = URL.createObjectURL(data);
+						appendMessage(imgUrl, peerId, true, false, peerId);
+					} else {
+						var ext = getExtensionFromMime(mime);
+						var filename = 'file_' + Date.now() + '.' + ext;
+						var url = URL.createObjectURL(data);
+						appendFileLink(url, filename, peerId, false, peerId);
+					}
+				} else if (data instanceof ArrayBuffer) {
+					var blob = new Blob([data], { type: 'application/octet-stream' });
+					var filename = 'file_' + Date.now() + '.bin';
+					var url = URL.createObjectURL(blob);
+					appendFileLink(url, filename, peerId, false, peerId);
 				} else {
-					try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch(e){ appendMessage('Peer sent data', peerId, false, false, peerId);}
+					try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch(e){ appendMessage('Peer sent data', peerId, false, false, peerId); }
 				}
 				// if contact not in list yet, add it
 				addContact(peerId);
@@ -598,6 +668,58 @@
         });
 
         // Remove any unconditional navigator.mediaDevices.getUserMedia(...) auto-call at bottom
+
+		// --- Changed: show/hide remote video overlay and handle active call reference ---
+		var activeCall = null;
+
+		function showRemoteStream(remoteStream) {
+			var overlay = document.getElementById('remoteOverlay');
+			overlay.style.display = 'block';
+			remoteOverlayVideo.srcObject = remoteStream;
+			remoteOverlayVideo.setAttribute('playsinline', '');
+			remoteOverlayVideo.play().catch(function(){ /* ignore */ });
+		}
+
+		function hideRemoteStream() {
+			var overlay = document.getElementById('remoteOverlay');
+			overlay.style.display = 'none';
+			// clear and stop remote video element
+			try {
+				if (remoteOverlayVideo && remoteOverlayVideo.srcObject) {
+					remoteOverlayVideo.pause();
+					remoteOverlayVideo.srcObject = null;
+				}
+			} catch (e) { /* ignore */ }
+			// hide local preview and clear it as user asked not to show local video
+			try {
+				if (localVideo) { localVideo.style.display = 'none'; localVideo.srcObject = null; }
+			} catch (e) {}
+			// clear activeCall reference (call will be closed where appropriate)
+			activeCall = null;
+		}
+
+		document.getElementById('hangupBtn').addEventListener('click', function() {
+			if (!activeCall && !pendingCall) return;
+			if (!confirm('Hang up the call?')) return;
+			// close active media call (PeerJS MediaConnection) if present
+			try {
+				if (activeCall && typeof activeCall.close === 'function') {
+					activeCall.close();
+				}
+			} catch (e) { console.warn('Error closing active call', e); }
+			// also close pending/incoming call if present
+			try {
+				if (pendingCall && typeof pendingCall.close === 'function') pendingCall.close();
+			} catch (e) {}
+			// hide overlay and clear video UI
+			hideRemoteStream();
+		});
+
+		// Hook incoming/outgoing call objects to set activeCall and attach close handler
+		// Merge into your makeCall / answer flows:
+		// - After var call = peer.call(...): set activeCall = call; attach call.on('close', ...) that calls hideRemoteStream()
+		// - After pendingCall.answer(stream): set activeCall = pendingCall; attach same handlers
+		// ...existing makeCall and answer code already sets activeCall = call / pendingCall and attaches handlers earlier ...
     </script>
 
     <!-- ...existing footer/ placeholders ... -->
