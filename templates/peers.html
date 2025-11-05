@@ -79,7 +79,7 @@
 			background: #000;
 			border-radius: 8px;
 			box-shadow: 0 8px 48px rgba(0,0,0,0.45);
-			z-index: 9999;
+			z-index: 10002;
 			display: none;
 			overflow: hidden;
 		}
@@ -90,16 +90,22 @@
 			background: #000;
 		}
 
-		/* Ensure no page-level scrollbars from element overflow */
-		html, body {
-			height: 100%;
-			margin: 0;
-			overflow: hidden;
-			box-sizing: border-box;
+		/* ensure Hang Up button is visible on top of the overlay */
+		.remote-overlay .hangup-btn {
+			position: absolute;
+			top: 12px;
+			right: 12px;
+			z-index: 10003; /* above the overlay */
+			background: rgba(220, 38, 38, 0.95);
+			color: #fff;
+			border: none;
+			padding: 8px 12px;
+			border-radius: 6px;
+			font-weight: 600;
+			cursor: pointer;
+			box-shadow: 0 6px 18px rgba(0,0,0,0.25);
 		}
-	</style>
-</head>
-<body>
+
 		/* Ensure no page-level scrollbars from element overflow */
 		html, body {
 			height: 100%;
@@ -183,6 +189,8 @@
         var users = {};
         var conn;
         var localStream;
+        // single global reference to active MediaConnection (set when call is made/answered)
+        var activeCall = null;
         var remoteOverlayVideo = document.getElementById('remoteOverlayVideo');
         var localVideo = document.getElementById('localVideo');
         var cameraSelect = document.getElementById('cameraSelect');
@@ -578,40 +586,55 @@
         var pendingCall = null;
         var answerBtn = document.getElementById('answerCall');
 
-        // Replace auto-answer behavior: when a call arrives, save it and show the answer button
+        // Replace incoming call handler to show a confirm popup and optionally auto-answer
+        // (replace the existing peer.on('call', ...) block)
         peer.on('call', function(call) {
             console.log('Incoming call from', call.peer);
+            // store temporarily so Answer button can still be used if user declines the immediate prompt
             pendingCall = call;
-            answerBtn.style.display = 'inline-block';
-            // optionally notify user in UI
-            document.getElementById('chatLog').innerHTML += 'Incoming call from ' + call.peer + ' — click Answer Call to accept<br>';
-        });
 
-        // When user clicks Answer Call, request camera/mic (user gesture) and then answer
-        answerBtn.addEventListener('click', function() {
-            if (!pendingCall) return;
-            // ensureLocalStream will prompt in a user gesture on iOS
-            ensureLocalStream(function(stream) {
-                if (!stream) {
-                    alert('Could not get camera/microphone.');
-                    return;
-                }
-                try {
-                    pendingCall.answer(stream);
-                } catch (e) {
-                    console.error('Error answering call:', e);
-                }
-                activeCall = pendingCall;
-                pendingCall.on('stream', function(remoteStream) {
-					showRemoteStream(remoteStream);
-				});
-				pendingCall.on('close', function(){ hideRemoteStream(); });
-				pendingCall.on('error', function(err){ console.error('Incoming call error', err); hideRemoteStream(); });
+            // show a simple browser confirm popup asking user to accept now
+            try {
+                var answerNow = confirm('Incoming call from ' + call.peer + '. Answer now?');
+            } catch (e) {
+                // in some embedded contexts confirm may be blocked; fall back to showing the Answer button
+                var answerNow = false;
+            }
 
-                // clear pending call and hide button
-                pendingCall = null;
-                answerBtn.style.display = 'none';
-            });
+            if (answerNow) {
+                // user accepted; get local media and answer
+                ensureLocalStream(function(stream) {
+                    if (!stream) {
+                        alert('Camera/microphone access required to answer the call.');
+                        // keep pendingCall so user may click Answer manually
+                        answerBtn.style.display = 'inline-block';
+                        return;
+                    }
+                    try {
+                        call.answer(stream);
+                    } catch (e) {
+                        console.error('Error answering call immediately:', e);
+                        answerBtn.style.display = 'inline-block';
+                        return;
+                    }
+
+                    // set active call and wire handlers
+                    activeCall = call;
+                    call.on('stream', function(remoteStream) {
+                        showRemoteStream(remoteStream);
+                    });
+                    call.on('close', function() { hideRemoteStream(); });
+                    call.on('error', function(err){ console.error('Incoming call error', err); hideRemoteStream(); });
+
+                    // clear pending and hide answer button since we've answered
+                    pendingCall = null;
+                    answerBtn.style.display = 'none';
+                });
+            } else {
+                // user declined immediate popup — show the UI Answer button as fallback
+                answerBtn.style.display = 'inline-block';
+                document.getElementById('chatLog').innerHTML += 'Incoming call from ' + call.peer + ' — click Answer to accept<br>';
+            }
         });
 
         // --- Changed: store inbound connections so we can reuse them ---
