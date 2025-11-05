@@ -37,20 +37,83 @@
         var canvas = document.getElementById('canvas');
         var context = canvas.getContext('2d');
 
-        // iOS compatibility fix: use secure connection
+        // --- Changed: create peer with modern iceServers ("urls") and debug/error logging ---
         peer = new Peer({
             secure: true,
+            debug: 2,
             config: {
-                'iceServers': [
-                    { url: 'stun:stun.l.google.com:19302' },
-                    { url: 'stun:stun1.l.google.com:19302' },
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' }
                 ]
             }
         });
 
+        peer.on('error', function(err) {
+            console.error('Peer error:', err);
+        });
+
+        // Helper: get or create a DataConnection and reuse it (important for iOS/Safari)
+        function getOrCreateConnection(userId, cb) {
+            if (!userId) return;
+            // reuse existing open connection
+            if (users[userId] && users[userId].conn && users[userId].conn.open) {
+                return cb(users[userId].conn);
+            }
+            // create a new connection with reliable flag (helps Safari)
+            var c = peer.connect(userId, { reliable: true });
+            users[userId] = users[userId] || { id: userId };
+            users[userId].conn = c;
+
+            c.on('open', function() {
+                console.log('Connection open to', userId);
+                cb(c);
+            });
+
+            c.on('data', function(data) {
+                // ensure inbound messages on outgoing connections are also handled
+                var chatLog = document.getElementById('chatLog');
+                if (typeof data === 'string') {
+                    if (data.indexOf('data:image/') === 0) {
+                        var image = document.createElement('img');
+                        image.src = data;
+                        image.style.maxWidth = '400px';
+                        image.style.display = 'block';
+                        chatLog.appendChild(image);
+                        chatLog.innerHTML += '<br>';
+                    } else {
+                        chatLog.innerHTML += 'Peer: ' + data + '<br>';
+                    }
+                } else if (data instanceof Blob || data instanceof ArrayBuffer) {
+                    var url = URL.createObjectURL(data);
+                    var image = document.createElement('img');
+                    image.src = url;
+                    image.style.maxWidth = '400px';
+                    image.style.display = 'block';
+                    chatLog.appendChild(image);
+                    chatLog.innerHTML += '<br>';
+                } else {
+                    try {
+                        chatLog.innerHTML += 'Peer: ' + JSON.stringify(data) + '<br>';
+                    } catch (e) {
+                        chatLog.innerHTML += 'Peer sent data<br>';
+                    }
+                }
+            });
+
+            c.on('error', function(err) {
+                console.error('Connection error with', userId, err);
+            });
+
+            c.on('close', function() {
+                console.log('Connection closed to', userId);
+                if (users[userId]) delete users[userId].conn;
+            });
+        }
+
         peer.on('open', function(id) {
             console.log('My peer ID is: ' + id);
-            users[id] = id;
+            users[id] = users[id] || { id: id };
             var userSelect = document.getElementById('userSelect');
             var option = document.createElement('option');
             option.value = id;
@@ -99,8 +162,7 @@
             var userId = document.getElementById('userSelect').value;
             var message = document.getElementById('messageInput').value;
             if (userId && message) {
-                conn = peer.connect(userId);
-                conn.on('open', function() {
+                getOrCreateConnection(userId, function(conn) {
                     conn.send(message);
                     document.getElementById('chatLog').innerHTML += 'You: ' + message + '<br>';
                     document.getElementById('messageInput').value = '';
@@ -116,8 +178,7 @@
                 var reader = new FileReader();
                 reader.onload = function() {
                     var imageData = reader.result;
-                    conn = peer.connect(userId);
-                    conn.on('open', function() {
+                    getOrCreateConnection(userId, function(conn) {
                         conn.send(imageData);
                         document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
                     });
@@ -133,24 +194,43 @@
                 localVideo.play();
                 var videoTracks = stream.getVideoTracks();
                 var track = videoTracks[0];
-                var imageCapture = new ImageCapture(track);
-                imageCapture.takePhoto()
-                .then(function(blob) {
+                // ImageCapture is not supported on all iOS versions — fallback to drawing to canvas
+                if (typeof ImageCapture !== 'undefined') {
+                    var imageCapture = new ImageCapture(track);
+                    imageCapture.takePhoto()
+                    .then(function(blob) {
+                        var userId = document.getElementById('userSelect').value;
+                        var reader = new FileReader();
+                        reader.onload = function() {
+                            var imageData = reader.result;
+                            getOrCreateConnection(userId, function(conn) {
+                                conn.send(imageData);
+                                document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
+                            });
+                        };
+                        reader.readAsDataURL(blob);
+                    })
+                    .catch(function(error) {
+                        console.error('Error taking photo:', error);
+                    });
+                } else {
+                    // fallback: grab a frame from the video into a canvas
                     var userId = document.getElementById('userSelect').value;
-                    var reader = new FileReader();
-                    reader.onload = function() {
-                        var imageData = reader.result;
-                        conn = peer.connect(userId);
-                        conn.on('open', function() {
-                            conn.send(imageData);
-                            document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
-                        });
-                    };
-                    reader.readAsDataURL(blob);
-                })
-                .catch(function(error) {
-                    console.error('Error taking photo:', error);
-                });
+                    canvas.width = localVideo.videoWidth || 640;
+                    canvas.height = localVideo.videoHeight || 480;
+                    context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob(function(blob) {
+                        var reader = new FileReader();
+                        reader.onload = function() {
+                            var imageData = reader.result;
+                            getOrCreateConnection(userId, function(conn) {
+                                conn.send(imageData);
+                                document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
+                            });
+                        };
+                        reader.readAsDataURL(blob);
+                    }, 'image/png');
+                }
             })
             .catch(function(err) {
                 console.log("Error: " + err);
@@ -160,24 +240,68 @@
         document.getElementById('makeCall').addEventListener('click', function() {
             var selectedUserId = document.getElementById('userSelect').value;
             if (selectedUserId) {
+                // ensure we have localStream before calling
+                if (!localStream) {
+                    alert('Local media not ready yet');
+                    return;
+                }
                 var call = peer.call(selectedUserId, localStream);
                 call.on('stream', function(remoteStream) {
                     remoteVideo.srcObject = remoteStream;
                 });
+                call.on('error', function(err){ console.error('Call error', err); });
             }
         });
 
-        peer.on('connection', function(conn) {
-            conn.on('data', function(data) {
+        // --- Changed: store inbound connections so we can reuse them ---
+        peer.on('connection', function(c) {
+            // store it
+            users[c.peer] = users[c.peer] || { id: c.peer };
+            users[c.peer].conn = c;
+
+            c.on('data', function(data) {
+                var chatLog = document.getElementById('chatLog');
                 if (typeof data === 'string') {
-                    document.getElementById('chatLog').innerHTML += 'Peer: ' + data + '<br>';
-                } else {
+                    if (data.indexOf('data:image/') === 0) {
+                        var image = document.createElement('img');
+                        image.src = data;
+                        image.style.maxWidth = '400px';
+                        image.style.display = 'block';
+                        chatLog.appendChild(image);
+                        chatLog.innerHTML += '<br>';
+                    } else {
+                        chatLog.innerHTML += 'Peer: ' + data + '<br>';
+                    }
+                } else if (data instanceof Blob || data instanceof ArrayBuffer) {
+                    var url = URL.createObjectURL(data);
                     var image = document.createElement('img');
-                    image.src = data;
-                    document.getElementById('chatLog').appendChild(image);
+                    image.src = url;
+                    image.style.maxWidth = '400px';
+                    image.style.display = 'block';
+                    chatLog.appendChild(image);
+                    chatLog.innerHTML += '<br>';
+                } else {
+                    try {
+                        chatLog.innerHTML += 'Peer: ' + JSON.stringify(data) + '<br>';
+                    } catch (e) {
+                        chatLog.innerHTML += 'Peer sent data<br>';
+                    }
                 }
             });
-        });
+
+            c.on('open', function() {
+                console.log('Inbound connection open from', c.peer);
+            });
+
+            c.on('close', function() {
+                console.log('Inbound connection closed from', c.peer);
+                if (users[c.peer]) delete users[c.peer].conn;
+            });
+
+            c.on('error', function(err){
+                console.error('Inbound connection error from', c.peer, err);
+            });
+         });
 
         navigator.mediaDevices.getUserMedia({video: true, audio: true})
         .then(function(stream) {
