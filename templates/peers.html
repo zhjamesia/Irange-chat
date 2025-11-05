@@ -17,6 +17,11 @@
     <br><br>
     <input type="text" id="messageInput" placeholder="Type a message...">
     <button id="sendMessage">Send</button>
+    <input type="file" id="imageInput" accept="image/*">
+    <button id="sendImage">Send Image</button>
+    <button id="takePicture">Take Picture</button>
+    <video id="localVideo" autoplay></video>
+    <canvas id="canvas" style="display:none;"></canvas>
     <br><br>
     <button id="makeCall">Call Selected User</button>
     <br><br>
@@ -28,6 +33,9 @@
         var conn;
         var localStream;
         var remoteVideo = document.getElementById('remoteVideo');
+        var localVideo = document.getElementById('localVideo');
+        var canvas = document.getElementById('canvas');
+        var context = canvas.getContext('2d');
 
         // iOS compatibility fix: use secure connection
         peer = new Peer({
@@ -100,6 +108,55 @@
             }
         });
 
+        document.getElementById('sendImage').addEventListener('click', function() {
+            var userId = document.getElementById('userSelect').value;
+            var imageInput = document.getElementById('imageInput');
+            if (userId && imageInput.files.length > 0) {
+                var file = imageInput.files[0];
+                var reader = new FileReader();
+                reader.onload = function() {
+                    var imageData = reader.result;
+                    conn = peer.connect(userId);
+                    conn.on('open', function() {
+                        conn.send(imageData);
+                        document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        document.getElementById('takePicture').addEventListener('click', function() {
+            navigator.mediaDevices.getUserMedia({video: true, audio: false})
+            .then(function(stream) {
+                localVideo.srcObject = stream;
+                localVideo.play();
+                var videoTracks = stream.getVideoTracks();
+                var track = videoTracks[0];
+                var imageCapture = new ImageCapture(track);
+                imageCapture.takePhoto()
+                .then(function(blob) {
+                    var userId = document.getElementById('userSelect').value;
+                    var reader = new FileReader();
+                    reader.onload = function() {
+                        var imageData = reader.result;
+                        conn = peer.connect(userId);
+                        conn.on('open', function() {
+                            conn.send(imageData);
+                            document.getElementById('chatLog').innerHTML += 'You sent an image<br>';
+                        });
+                    };
+                    reader.readAsDataURL(blob);
+                })
+                .catch(function(error) {
+                    console.error('Error taking photo:', error);
+                });
+            })
+            .catch(function(err) {
+                console.log("Error: " + err);
+            });
+        });
+
         document.getElementById('makeCall').addEventListener('click', function() {
             var selectedUserId = document.getElementById('userSelect').value;
             if (selectedUserId) {
@@ -112,7 +169,13 @@
 
         peer.on('connection', function(conn) {
             conn.on('data', function(data) {
-                document.getElementById('chatLog').innerHTML += 'Peer: ' + data + '<br>';
+                if (typeof data === 'string') {
+                    document.getElementById('chatLog').innerHTML += 'Peer: ' + data + '<br>';
+                } else {
+                    var image = document.createElement('img');
+                    image.src = data;
+                    document.getElementById('chatLog').appendChild(image);
+                }
             });
         });
 
@@ -132,5 +195,6 @@
         });
     </script>
     <div id="myPeerId"></div>
+    <div id="chatLog"></div>
 </body>
 </html>
