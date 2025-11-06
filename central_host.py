@@ -1,4 +1,3 @@
-print("peers.html is a PeerJS video chat interface that allows users to join a room, select a user to call, and make a video call.")
 from flask import Flask, render_template, request
 
 app = Flask(__name__)

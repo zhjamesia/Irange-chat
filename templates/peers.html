@@ -18,6 +18,7 @@
 			<!-- add overlay just after header so it's positioned inside the chat container -->
 			<div id="remoteOverlay" class="remote-overlay" aria-hidden="true">
 				<video id="remoteOverlayVideo" autoplay playsinline></video>
+				<button id="shareDesktop" class="share-desktop-btn" style="display:none;">Share Desktop</button>
 				<button id="hangupBtn" class="hangup-btn">Hang Up</button>
 			</div>
 
@@ -34,9 +35,8 @@
 							<option value="">Default camera</option>
 						</select>
 
-						<button id="makeCall" class="btn" style="width:30%;display:inline-block;margin-right:4%;">Call</button>
-						<button id="shareDesktop" class="btn" style="width:30%;display:inline-block;margin-right:4%;">Share Desktop</button> <!-- NEW -->
-						<button id="answerCall" class="btn" style="width:30%;display:inline-block;display:none;">Answer</button>
+						<button id="makeCall" class="btn" style="width:48%;display:inline-block;margin-right:4%;">Call</button>
+						<button id="answerCall" class="btn" style="width:48%;display:inline-block;display:none;">Answer</button>
 					</div>
 
 					<div id="contactsList"></div>
