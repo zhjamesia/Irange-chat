@@ -24,6 +24,7 @@ A modern, browser-based peer-to-peer chat application with video calling capabil
 ## 🎯 Overview
 
 Irange Chat enables direct peer-to-peer communication between users in the same room. The application uses WebRTC technology (via PeerJS) to establish direct connections between peers, allowing for:
+![Irange Chat Demo](assets/image.png)
 
 - **Text messaging** - Real-time chat between peers
 - **File sharing** - Transfer files and images directly between users
