@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  p2p-chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: p2p-chat-server
+    ports:
+      - "7890:7890"
+    restart: always
+    environment:
+      - FLASK_ENV=production
+    volumes:
+      # Optional: mount for development (comment out for production)
+      # - ./central_host.py:/app/central_host.py
+      # - ./templates:/app/templates
+      # - ./static:/app/static
+    networks:
+      - p2p-network
+
+networks:
+  p2p-network:
+    driver: bridge
+
