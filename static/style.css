@@ -1,0 +1,107 @@
+/* Centered fixed-size chat box */
+.center-wrap { display:block; height:100vh; background:#e5ddd5; }
+.chat-box {
+	width:100vw;
+	height:100vh;
+	border-radius:0;
+	box-shadow:0 6px 18px rgba(0,0,0,0.12);
+	display:flex;
+	flex-direction:column;
+	overflow:hidden;
+	position:relative; /* needed for overlay positioning */
+}
+.chat-header {
+	padding:12px 16px;
+	background:#00c853;
+	color:#fff;
+	font-weight:600;
+	display:flex;
+	justify-content:space-between;
+	align-items:center;
+}
+.chat-area { display:flex; flex:1; min-height:0; } /* min-height:0 needed for flexbox scroll */
+.contacts-pane {
+	width:260px;
+	border-right:1px solid #eee;
+	overflow:auto;
+	background:#fafafa;
+}
+.contacts-pane .contact { padding:10px; border-bottom:1px solid #f0f0f0; cursor:pointer; }
+.messages-pane {
+	flex:1;
+	display:flex;
+	flex-direction:column;
+	min-width:0;
+}
+.messages {
+	padding:16px;
+	overflow:auto;
+	background:linear-gradient(180deg,#f6f6f6,#eaeaea);
+	flex:1;
+}
+.input-bar {
+	padding:10px;
+	display:flex;
+	gap:8px;
+	align-items:center;
+	border-top:1px solid #eee;
+	background:#fff;
+}
+.input-bar textarea { flex:1; resize:none; height:48px; padding:10px; border-radius:8px; border:1px solid #ddd; font-size:14px; }
+.input-bar .file-input {
+	display:inline-block;
+}
+.input-bar .btn { background:#00c853; color:#fff; padding:10px 14px; border-radius:8px; border:none; cursor:pointer; }
+/* small image in bubble */
+.msg-img { max-width:260px; border-radius:8px; display:block; }
+
+/* keep previous wechat-like bubble styles if present */
+.message.me { justify-content:flex-end; }
+.bubble.right { background:#00c853; color:#fff; }
+.bubble.left { background:#fff; color:#111; }
+
+/* Remote video overlay (overlaps chat until hangup) */
+.remote-overlay {
+	/* changed: make overlay cover 80% of screen and center it */
+	position: absolute;
+	top: 10vh;           /* 10% from top */
+	left: 10vw;          /* 10% from left */
+	width: 80vw;         /* 80% viewport width */
+	height: 80vh;        /* 80% viewport height */
+	background: #000;
+	border-radius: 8px;
+	box-shadow: 0 8px 48px rgba(0,0,0,0.45);
+	z-index: 10002;
+	display: none;
+	overflow: hidden;
+}
+.remote-overlay video {
+	width: 100%;
+	height: 100%;
+	object-fit: contain; /* changed: contain so entire remote video is visible */
+	background: #000;
+}
+
+/* ensure Hang Up button is visible on top of the overlay */
+.remote-overlay .hangup-btn {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	z-index: 10003; /* above the overlay */
+	background: rgba(220, 38, 38, 0.95);
+	color: #fff;
+	border: none;
+	padding: 8px 12px;
+	border-radius: 6px;
+	font-weight: 600;
+	cursor: pointer;
+	box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+}
+
+/* Ensure no page-level scrollbars from element overflow */
+html, body {
+	height: 100%;
+	margin: 0;
+	overflow: hidden;
+	box-sizing: border-box;
+}
