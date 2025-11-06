@@ -3,11 +3,6 @@ FROM python:3.7.9-alpine
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies if needed
-RUN apk add --no-cache \
-    gcc \
-    musl-dev \
-    && rm -rf /var/cache/apk/*
 
 # Copy requirements first for better caching
 COPY requirements.txt .
