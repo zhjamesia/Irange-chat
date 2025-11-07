@@ -472,6 +472,18 @@ document.getElementById('sendAll').addEventListener('click', function() {
     }
 });
 
+// Send on Enter when focused in the message textbox (Shift+Enter inserts newline)
+var messageInputEl = document.getElementById('messageInput');
+if (messageInputEl) {
+    messageInputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            var sendBtn = document.getElementById('sendAll');
+            if (sendBtn) sendBtn.click();
+        }
+    });
+}
+
 // New helper: request local media on demand (use user gesture)
 function ensureLocalStream(cb) {
     if (localStream) {
