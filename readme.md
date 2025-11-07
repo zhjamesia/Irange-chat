@@ -22,7 +22,7 @@ A modern, browser-based peer-to-peer chat application with video calling capabil
 - [License](#license)
 
 ## 🎯 Overview
-
+**Live Demo:** https://www.irange.cn:7890/
 Irange Chat enables direct peer-to-peer communication between users in the same room. The application uses WebRTC technology (via PeerJS) to establish direct connections between peers, allowing for:
 ![Irange Chat Demo](assets/image.png)
 
@@ -32,6 +32,17 @@ Irange Chat enables direct peer-to-peer communication between users in the same 
 - **Room-based discovery** - Simple room system to find and connect with other peers
 
 The Flask server acts only as a lightweight signaling server for peer discovery, while all actual communication happens directly between peers.
+
+### 中文简介
+
+Irange Chat 支持同房间用户之间的直接点对点通信。该应用使用 WebRTC 技术（通过 PeerJS）在节点之间建立直接连接，实现：
+
+- **文本消息** - 节点之间的实时聊天
+- **文件共享** - 在用户之间直接传输文件和图片
+- **视频通话** - 一对一视频通信，支持摄像头选择
+- **基于房间的发现** - 简单的房间系统，用于查找并连接其他节点
+
+Flask 服务器仅作为轻量级的信令服务器用于节点发现，而所有实际的通信都在节点之间直接进行。
 
 ## ✨ Features
 
