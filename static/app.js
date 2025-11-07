@@ -190,11 +190,15 @@ function renderContacts(peers) {
 
 // Replace addContact to reliably set currentPeer and support touch
 function addContact(id) {
+    // Skip if id is null, undefined, or empty
+    if (!id) return;
     if (contactsListDiv.querySelector('.contact[data-id="'+id+'"]')) return;
     var el = document.createElement('div');
     el.className = 'contact';
     el.dataset.id = id;
-    el.innerHTML = '<div class="avatar"></div><div class="meta"><strong>' + id + '</strong><small>Tap to chat</small></div>';
+    // Display peer ID safely (sanitize if needed, but peer IDs should be safe)
+    var displayId = String(id).substring(0, 20) + (id.length > 20 ? '...' : '');
+    el.innerHTML = '<div class="avatar"></div><div class="meta"><strong>' + displayId + '</strong><small>Tap to chat</small></div>';
 
     function selectContact() {
         // highlight selection
@@ -251,17 +255,41 @@ function getOrCreateConnection(userId, cb) {
         }
 
         try {
-            if (typeof data === 'string') {
+            // Check if data is a file metadata object
+            if (data && typeof data === 'object' && !(data instanceof Blob) && !(data instanceof ArrayBuffer) && data.type === 'file') {
+                var fileMimeType = data.mimeType || '';
+                var fileName = data.filename || ('file_' + Date.now());
+                var fileData = data.data;
+                
+                // If filename doesn't have extension, try to add one from MIME type
+                if (fileName.indexOf('.') === -1 && fileMimeType) {
+                    var ext = getExtensionFromMime(fileMimeType);
+                    if (ext && ext !== 'bin') {
+                        fileName = fileName + '.' + ext;
+                    }
+                }
+                
+                if (fileMimeType.indexOf('image/') === 0 && typeof fileData === 'string' && fileData.indexOf('data:image/') === 0) {
+                    // image file
+                    appendMessage(fileData, peerId, true, false, peerId);
+                } else {
+                    // other file — offer as downloadable link
+                    storeAndRenderFile(fileData, fileName);
+                }
+            } else if (typeof data === 'string') {
                 // data URL (image or other) or plain text
                 if (data.indexOf('data:') === 0) {
                     if (data.indexOf('data:image/') === 0) {
                         // image data URL — render image
                         appendMessage(data, peerId, true, false, peerId);
-                    } else {
-                        // other data URL — offer as downloadable link
-                        var fn = 'file_' + Date.now();
-                        storeAndRenderFile(data, fn);
-                    }
+                } else {
+                    // other data URL — offer as downloadable link with extension from MIME
+                    var mimeMatch = data.match(/^data:([^;,]+)[;,]/);
+                    var mimeType = mimeMatch ? mimeMatch[1] : '';
+                    var ext = getExtensionFromMime(mimeType);
+                    var fn = 'file_' + Date.now() + (ext ? ('.' + ext) : '');
+                    storeAndRenderFile(data, fn);
+                }
                 } else {
                     // plain text
                     appendMessage(data, peerId, false, false, peerId);
@@ -276,7 +304,7 @@ function getOrCreateConnection(userId, cb) {
                     setTimeout(function(){ URL.revokeObjectURL(imgUrl); }, 60000);
                 } else {
                     // non-image Blob -> create download link
-                    var ext = (mime.split('/')[1] || 'bin').split(';')[0];
+                    var ext = getExtensionFromMime(mime);
                     var filename = 'file_' + Date.now() + '.' + ext;
                     var url = URL.createObjectURL(data);
                     storeAndRenderFile(url, filename);
@@ -296,8 +324,10 @@ function getOrCreateConnection(userId, cb) {
             console.error('Error handling incoming data from', peerId, e);
         }
 
-        // ensure contact appears in list
-        addContact(peerId);
+        // ensure contact appears in list (only if peerId is valid)
+        if (peerId) {
+            addContact(peerId);
+        }
     });
 
     c.on('error', function(err) {
@@ -381,10 +411,21 @@ document.getElementById('sendAll').addEventListener('click', function() {
         var reader = new FileReader();
         reader.onload = function() {
             var imageData = reader.result;
+            // Send file with metadata (filename and type) as an object
+            var fileData = {
+                type: 'file',
+                filename: file.name || 'file',
+                mimeType: file.type || '',
+                data: imageData
+            };
             getOrCreateConnection(userId, function(conn) {
-                conn.send(imageData);
+                conn.send(fileData);
                 // store and render locally
-                appendMessage(imageData, 'You', true, true, userId);
+                if (file.type && file.type.indexOf('image/') === 0) {
+                    appendMessage(imageData, 'You', true, true, userId);
+                } else {
+                    appendFileLink(imageData, file.name || ('file_' + Date.now()), 'You', true, userId);
+                }
                 imageInput.value = '';
             });
         };
@@ -656,7 +697,28 @@ peer.on('connection', function(c) {
 
     c.on('data', function(data) {
         var peerId = c.peer;
-        if (typeof data === 'string') {
+        // Check if data is a file metadata object
+        if (data && typeof data === 'object' && !(data instanceof Blob) && !(data instanceof ArrayBuffer) && data.type === 'file') {
+            var fileMimeType = data.mimeType || '';
+            var fileName = data.filename || ('file_' + Date.now());
+            var fileData = data.data;
+            
+            // If filename doesn't have extension, try to add one from MIME type
+            if (fileName.indexOf('.') === -1 && fileMimeType) {
+                var ext = getExtensionFromMime(fileMimeType);
+                if (ext && ext !== 'bin') {
+                    fileName = fileName + '.' + ext;
+                }
+            }
+            
+            if (fileMimeType.indexOf('image/') === 0 && typeof fileData === 'string' && fileData.indexOf('data:image/') === 0) {
+                // image file
+                appendMessage(fileData, peerId, true, false, peerId);
+            } else {
+                // other file — offer as downloadable link
+                appendFileLink(fileData, fileName, peerId, false, peerId);
+            }
+        } else if (typeof data === 'string') {
             if (data.indexOf('data:') === 0) {
                 // data URL: convert and handle accordingly
                 handleDataUrlString(data, peerId, peerId, false);
@@ -682,13 +744,17 @@ peer.on('connection', function(c) {
         } else {
             try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch(e){ appendMessage('Peer sent data', peerId, false, false, peerId); }
         }
-        // if contact not in list yet, add it
-        addContact(peerId);
+        // if contact not in list yet, add it (only if peerId is valid)
+        if (peerId) {
+            addContact(peerId);
+        }
     });
 
     c.on('open', function() {
         console.log('Inbound connection open from', c.peer);
-        addContact(c.peer);
+        if (c.peer) {
+            addContact(c.peer);
+        }
     });
 
     c.on('close', function() {
@@ -707,14 +773,20 @@ function handleDataUrlString(data, from, peerId, me) {
         // image data URL — render image
         appendMessage(data, from, true, me, peerId);
     } else {
-        // other data URL — offer as downloadable link
-        var fn = 'file_' + Date.now();
+        // other data URL — offer as downloadable link with extension from MIME
+        var mimeMatch = data.match(/^data:([^;,]+)[;,]/);
+        var mimeType = mimeMatch ? mimeMatch[1] : '';
+        var ext = getExtensionFromMime(mimeType);
+        var fn = 'file_' + Date.now() + (ext ? ('.' + ext) : '');
         appendFileLink(data, fn, from, me, peerId);
     }
 }
 
 // Helper function to get file extension from MIME type
 function getExtensionFromMime(mime) {
+    if (!mime) return 'bin';
+    // Remove parameters (e.g., charset) from MIME type
+    var cleanMime = mime.split(';')[0].trim();
     var mimeMap = {
         'image/jpeg': 'jpg',
         'image/png': 'png',
@@ -724,13 +796,43 @@ function getExtensionFromMime(mime) {
         'video/webm': 'webm',
         'audio/mpeg': 'mp3',
         'audio/wav': 'wav',
+        'audio/ogg': 'ogg',
         'application/pdf': 'pdf',
         'application/zip': 'zip',
+        'application/x-zip-compressed': 'zip',
+        'application/json': 'json',
+        'application/javascript': 'js',
+        'application/xml': 'xml',
         'text/plain': 'txt',
-        'text/html': 'html'
+        'text/html': 'html',
+        'text/css': 'css',
+        'text/javascript': 'js',
+        'text/csv': 'csv',
+        'application/msword': 'doc',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+        'application/vnd.ms-excel': 'xls',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+        'application/vnd.ms-powerpoint': 'ppt',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx'
     };
-    var ext = mimeMap[mime] || (mime.split('/')[1] || 'bin').split(';')[0];
-    return ext;
+    // Check if we have a mapping
+    if (mimeMap[cleanMime]) {
+        return mimeMap[cleanMime];
+    }
+    // For known MIME types with standard extensions, try to extract
+    var parts = cleanMime.split('/');
+    if (parts.length === 2) {
+        var type = parts[0];
+        var subtype = parts[1];
+        // For application types, use 'bin' unless we know the extension
+        if (type === 'application' && subtype === 'octet-stream') {
+            return 'bin';
+        }
+        // For other unknown types, use 'bin' as fallback
+        // Don't use the subtype directly as it might be 'octet-stream' or other non-extension values
+    }
+    // Default to 'bin' for unknown types
+    return 'bin';
 }
 
 // Remove any unconditional navigator.mediaDevices.getUserMedia(...) auto-call at bottom
