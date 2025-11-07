@@ -30,6 +30,20 @@
 .contacts-pane .contact:hover { background-color:#f5f5f5; }
 .contacts-pane .contact.selected { background-color:#00c853; color:#fff; }
 .contacts-pane .contact.selected:hover { background-color:#00b048; }
+/* unread indicator (red dot) */
+.contacts-pane .contact { position: relative; }
+.contacts-pane .contact .unread-dot {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 10px;
+    height: 10px;
+    background: #ff3b30;
+    border-radius: 50%;
+    display: none;
+}
+.contacts-pane .contact.unread .unread-dot { display: inline-block; }
 .messages-pane {
 	flex:1;
 	display:flex;

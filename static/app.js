@@ -26,6 +26,8 @@ var context = canvas.getContext('2d');
 var messages = {}; // { peerId: [{text, from, isImage, me, ts}, ...] }
 var currentPeer = null;
 var refreshTimer = null;
+// directory of peerId -> display name
+var peerDirectory = {};
 
 function appendMessage(text, from, isImage, me, peerId) {
     peerId = peerId || currentPeer;
@@ -146,7 +148,8 @@ function renderChat(peerId) {
         document.getElementById('chatTitle') && (document.getElementById('chatTitle').textContent = 'Select a contact');
         return;
     }
-    document.getElementById('chatTitle') && (document.getElementById('chatTitle').textContent = peerId);
+    var titleName = peerDirectory[peerId] || peerId;
+    document.getElementById('chatTitle') && (document.getElementById('chatTitle').textContent = titleName);
     var list = messages[peerId] || [];
     list.forEach(function(m) {
         var wrapper = document.createElement('div');
@@ -196,9 +199,11 @@ function addContact(id) {
     var el = document.createElement('div');
     el.className = 'contact';
     el.dataset.id = id;
-    // Display peer ID safely (sanitize if needed, but peer IDs should be safe)
-    var displayId = String(id).substring(0, 20) + (id.length > 20 ? '...' : '');
-    el.innerHTML = '<div class="avatar"></div><div class="meta"><strong>' + displayId + '</strong><small>Tap to chat</small></div>';
+    // Use username if available
+    var displayName = peerDirectory[id] || id;
+    var safeText = String(displayName);
+    var displayShort = safeText.substring(0, 20) + (safeText.length > 20 ? '...' : '');
+    el.innerHTML = '<div class="avatar"></div><div class="meta"><strong>' + displayShort + '</strong><small>Tap to chat</small></div><span class="unread-dot"></span>';
 
     function selectContact() {
         // highlight selection
@@ -211,6 +216,7 @@ function addContact(id) {
 
         // authoritative selection used by sendAll and render
         currentPeer = id;
+        clearUnread(id);
         renderChat(id);
     }
 
@@ -222,6 +228,17 @@ function addContact(id) {
     }, { passive:false });
 
     contactsListDiv.appendChild(el);
+}
+
+function markUnread(id) {
+    if (!id || id === currentPeer) return;
+    var el = contactsListDiv.querySelector('.contact[data-id="'+id+'"]');
+    if (el) el.classList.add('unread');
+}
+
+function clearUnread(id) {
+    var el = contactsListDiv.querySelector('.contact[data-id="'+id+'"]');
+    if (el) el.classList.remove('unread');
 }
 
 peer.on('error', function(err) {
@@ -251,7 +268,8 @@ function getOrCreateConnection(userId, cb) {
 
         // small helper to store a file message and render a download link in chat UI
         function storeAndRenderFile(url, filename) {
-            appendFileLink(url, filename, peerId, false, peerId);
+            var fromName = peerDirectory[peerId] || peerId;
+            appendFileLink(url, filename, fromName, false, peerId);
         }
 
         try {
@@ -271,7 +289,7 @@ function getOrCreateConnection(userId, cb) {
                 
                 if (fileMimeType.indexOf('image/') === 0 && typeof fileData === 'string' && fileData.indexOf('data:image/') === 0) {
                     // image file
-                    appendMessage(fileData, peerId, true, false, peerId);
+                    appendMessage(fileData, (peerDirectory[peerId] || peerId), true, false, peerId);
                 } else {
                     // other file — offer as downloadable link
                     storeAndRenderFile(fileData, fileName);
@@ -281,7 +299,7 @@ function getOrCreateConnection(userId, cb) {
                 if (data.indexOf('data:') === 0) {
                     if (data.indexOf('data:image/') === 0) {
                         // image data URL — render image
-                        appendMessage(data, peerId, true, false, peerId);
+                        appendMessage(data, (peerDirectory[peerId] || peerId), true, false, peerId);
                 } else {
                     // other data URL — offer as downloadable link with extension from MIME
                     var mimeMatch = data.match(/^data:([^;,]+)[;,]/);
@@ -292,14 +310,14 @@ function getOrCreateConnection(userId, cb) {
                 }
                 } else {
                     // plain text
-                    appendMessage(data, peerId, false, false, peerId);
+                    appendMessage(data, (peerDirectory[peerId] || peerId), false, false, peerId);
                 }
             } else if (data instanceof Blob) {
                 var mime = data.type || '';
                 if (mime.indexOf('image/') === 0) {
                     // image Blob
                     var imgUrl = URL.createObjectURL(data);
-                    appendMessage(imgUrl, peerId, true, false, peerId);
+                    appendMessage(imgUrl, (peerDirectory[peerId] || peerId), true, false, peerId);
                     // schedule revoke after some time (keep enough for user to view/download)
                     setTimeout(function(){ URL.revokeObjectURL(imgUrl); }, 60000);
                 } else {
@@ -318,7 +336,7 @@ function getOrCreateConnection(userId, cb) {
                 setTimeout(function(){ /* optionally revoke later */ }, 60000);
             } else {
                 // fallback: stringify unknown objects
-                try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch (e) { appendMessage('Peer sent data', peerId, false, false, peerId); }
+                try { appendMessage(JSON.stringify(data), (peerDirectory[peerId] || peerId), false, false, peerId); } catch (e) { appendMessage('Peer sent data', (peerDirectory[peerId] || peerId), false, false, peerId); }
             }
         } catch (e) {
             console.error('Error handling incoming data from', peerId, e);
@@ -327,6 +345,7 @@ function getOrCreateConnection(userId, cb) {
         // ensure contact appears in list (only if peerId is valid)
         if (peerId) {
             addContact(peerId);
+            if (peerId !== currentPeer) markUnread(peerId);
         }
     });
 
@@ -350,20 +369,30 @@ function refreshPeersFromServer() {
     xhr.onload = function() {
         if (xhr.status === 200) {
             try {
-                var peers = JSON.parse(xhr.responseText).peers || [];
-                // update left contacts UI
-                renderContacts(peers);
-                // also update hidden select for backwards compatibility
-                var userSelect = document.getElementById('userSelect');
-                userSelect.innerHTML = '<option value="">Select a user to chat with</option>';
-                peers.forEach(function(peerId) {
-                    if (peerId !== peer.id) {
-                        var option = document.createElement('option');
-                        option.value = peerId;
-                        option.text = peerId;
-                        userSelect.add(option);
+                var respPeers = JSON.parse(xhr.responseText).peers || [];
+                // Build directory and ids list (supports both old string and new {id,name})
+                var ids = [];
+                respPeers.forEach(function(p) {
+                    if (typeof p === 'string') {
+                        ids.push(p);
+                    } else if (p && p.id) {
+                        ids.push(p.id);
+                        if (typeof p.name === 'string') peerDirectory[p.id] = p.name || '';
                     }
                 });
+                renderContacts(ids);
+                var userSelect = document.getElementById('userSelect');
+                if (userSelect) {
+                    userSelect.innerHTML = '<option value="">Select a user to chat with</option>';
+                    ids.forEach(function(peerId) {
+                        if (peerId !== peer.id) {
+                            var option = document.createElement('option');
+                            option.value = peerId;
+                            option.text = peerDirectory[peerId] || peerId;
+                            userSelect.add(option);
+                        }
+                    });
+                }
             } catch (e) { console.warn('Invalid peers response', e); }
         }
     };
@@ -374,8 +403,8 @@ peer.on('open', function(id) {
     users[id] = users[id] || { id: id };
     addContact(id); // optional, shows self in contacts
     document.getElementById('myPeerId').innerHTML = 'My Peer ID: ' + id;
-    // if already had roomId (reconnect), refresh peers
-    if (roomId) { refreshPeersFromServer(); if (refreshTimer) clearInterval(refreshTimer); refreshTimer = setInterval(refreshPeersFromServer, 10000); }
+    // if already had roomId (reconnect), refresh peers once (no polling)
+    if (roomId) { refreshPeersFromServer(); if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } }
 });
 
 document.getElementById('joinRoomLeft').addEventListener('click', function() {
@@ -384,13 +413,13 @@ document.getElementById('joinRoomLeft').addEventListener('click', function() {
     var xhr = new XMLHttpRequest();
     xhr.open('POST', '/join', true);
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    xhr.send('roomId=' + encodeURIComponent(roomId) + '&peerId=' + encodeURIComponent(peer.id));
+    var username = document.getElementById('usernameInput') ? (document.getElementById('usernameInput').value || '') : '';
+    xhr.send('roomId=' + encodeURIComponent(roomId) + '&peerId=' + encodeURIComponent(peer.id) + '&username=' + encodeURIComponent(username));
     xhr.onload = function() {
         if (xhr.status === 200) {
-            // start immediate refresh and periodic refresh every 10s
+            // single immediate refresh (stop periodic polling)
             refreshPeersFromServer();
-            if (refreshTimer) clearInterval(refreshTimer);
-            refreshTimer = setInterval(refreshPeersFromServer, 10000);
+            if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
         } else {
             alert('Failed to join room');
         }
@@ -713,40 +742,41 @@ peer.on('connection', function(c) {
             
             if (fileMimeType.indexOf('image/') === 0 && typeof fileData === 'string' && fileData.indexOf('data:image/') === 0) {
                 // image file
-                appendMessage(fileData, peerId, true, false, peerId);
+                appendMessage(fileData, (peerDirectory[peerId] || peerId), true, false, peerId);
             } else {
                 // other file — offer as downloadable link
-                appendFileLink(fileData, fileName, peerId, false, peerId);
+                appendFileLink(fileData, fileName, (peerDirectory[peerId] || peerId), false, peerId);
             }
         } else if (typeof data === 'string') {
             if (data.indexOf('data:') === 0) {
                 // data URL: convert and handle accordingly
-                handleDataUrlString(data, peerId, peerId, false);
+                handleDataUrlString(data, (peerDirectory[peerId] || peerId), peerId, false);
             } else {
-                appendMessage(data, peerId, false, false, peerId);
+                appendMessage(data, (peerDirectory[peerId] || peerId), false, false, peerId);
             }
         } else if (data instanceof Blob) {
             var mime = data.type || '';
             if (mime.indexOf('image/') === 0) {
                 var imgUrl = URL.createObjectURL(data);
-                appendMessage(imgUrl, peerId, true, false, peerId);
+                appendMessage(imgUrl, (peerDirectory[peerId] || peerId), true, false, peerId);
             } else {
                 var ext = getExtensionFromMime(mime);
                 var filename = 'file_' + Date.now() + '.' + ext;
                 var url = URL.createObjectURL(data);
-                appendFileLink(url, filename, peerId, false, peerId);
+                appendFileLink(url, filename, (peerDirectory[peerId] || peerId), false, peerId);
             }
         } else if (data instanceof ArrayBuffer) {
             var blob = new Blob([data], { type: 'application/octet-stream' });
             var filename = 'file_' + Date.now() + '.bin';
             var url = URL.createObjectURL(blob);
-            appendFileLink(url, filename, peerId, false, peerId);
+            appendFileLink(url, filename, (peerDirectory[peerId] || peerId), false, peerId);
         } else {
-            try { appendMessage(JSON.stringify(data), peerId, false, false, peerId); } catch(e){ appendMessage('Peer sent data', peerId, false, false, peerId); }
+            try { appendMessage(JSON.stringify(data), (peerDirectory[peerId] || peerId), false, false, peerId); } catch(e){ appendMessage('Peer sent data', (peerDirectory[peerId] || peerId), false, false, peerId); }
         }
         // if contact not in list yet, add it (only if peerId is valid)
         if (peerId) {
             addContact(peerId);
+            if (peerId !== currentPeer) markUnread(peerId);
         }
     });
 

@@ -4,6 +4,7 @@ import time
 
 app = Flask(__name__)
 
+# room_id -> { peer_id: username }
 peers = {}
 room_timestamps = {}  # Track when rooms were last accessed
 ROOM_TIMEOUT = 30 * 60  # 30 minutes in seconds
@@ -33,7 +34,11 @@ def index():
 def join_room():
     room_id = request.form['roomId']
     peer_id = request.form['peerId']
-    peers[room_id] = peers.get(room_id, []) + [peer_id]
+    username = request.form.get('username', '')
+    # store as mapping for richer data (id -> name)
+    room = peers.get(room_id, {})
+    room[peer_id] = username or ''
+    peers[room_id] = room
     room_timestamps[room_id] = time.time()  # Update last access time
     return 'Joined room: ' + room_id
 
@@ -42,7 +47,12 @@ def get_peers():
     room_id = request.form['roomId']
     if room_id in room_timestamps:
         room_timestamps[room_id] = time.time()  # Update last access time
-    return {'peers': peers.get(room_id, [])}
+    room = peers.get(room_id, {})
+    # return as list of objects: [{id, name}]
+    return {'peers': [
+        {'id': pid, 'name': room.get(pid, '')}
+        for pid in room.keys()
+    ]}
 
 
 if __name__ == '__main__':
