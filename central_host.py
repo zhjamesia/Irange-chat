@@ -51,7 +51,7 @@ if __name__ == '__main__':
     cleanup_thread.start()
     
     app.run(debug=False, 
-        host="0.0.0.0", 
+        host="localhost", 
         port="17890",
         # ssl_context='adhoc'
      )
