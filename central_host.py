@@ -53,5 +53,5 @@ if __name__ == '__main__':
     app.run(debug=False, 
         host="localhost", 
         port="17890",
-        ssl_context='adhoc'
+        # ssl_context='adhoc'
      )
