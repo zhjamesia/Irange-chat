@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: p2p-chat-server
     ports:
-      - "localhost:17890:17890"
+      - "127.0.0.1:17890:17890"
     restart: always
     environment:
       - FLASK_ENV=production
